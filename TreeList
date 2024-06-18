@@ -1,9 +1,16 @@
-Leaf node
-
 const collectSelectedPathsRecursive = (node, depth = 1) => {
-    // If we are at depth 4 and node is checked, return the node
+    const depthKeyMap = {
+        1: 'levelA',
+        2: 'levelB',
+        3: 'levelC',
+        // For depth 4, we don't need to include children key
+    };
+
+    const currentKey = depthKeyMap[depth];
+
+    // If we are at depth 4 and node is checked, return the node without children key
     if (depth === 4 && node.isChecked) {
-        return { ...node, children: [] };
+        return { ...node };
     }
 
     // Initialize collected paths for the current node
@@ -21,7 +28,7 @@ const collectSelectedPathsRecursive = (node, depth = 1) => {
 
     // If collectedPaths is not empty, include current node in the path
     if (collectedPaths.length > 0) {
-        return { ...node, children: collectedPaths };
+        return { ...node, [currentKey]: collectedPaths };
     }
 
     // Return null if no valid paths were collected
@@ -72,8 +79,7 @@ const sampleData = [
                                         "id": 14,
                                         "name": "Jane Doe 4th level 1",
                                         "expanded": true,
-                                        "isChecked": true,
-                                        "children": []
+                                        "isChecked": true
                                     }
                                 ]
                             },
@@ -87,8 +93,37 @@ const sampleData = [
                                         "id": 16,
                                         "name": "Jane Doe 4th level 2",
                                         "expanded": true,
-                                        "isChecked": false,
-                                        "children": []
+                                        "isChecked": false
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": 21,
+                "name": "Jane Doe 1st level 2",
+                "expanded": true,
+                "isChecked": false,
+                "children": [
+                    {
+                        "id": 22,
+                        "name": "Jane Doe 2nd level 2",
+                        "expanded": true,
+                        "isChecked": false,
+                        "children": [
+                            {
+                                "id": 23,
+                                "name": "Jane Doe 3rd level 3",
+                                "expanded": true,
+                                "isChecked": false,
+                                "children": [
+                                    {
+                                        "id": 24,
+                                        "name": "Jane Doe 4th level 3",
+                                        "expanded": true,
+                                        "isChecked": true
                                     }
                                 ]
                             }
