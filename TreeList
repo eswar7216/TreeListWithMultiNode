@@ -1,0 +1,105 @@
+Leaf node
+
+const collectSelectedPathsRecursive = (node, depth = 1) => {
+    // If we are at depth 4 and node is checked, return the node
+    if (depth === 4 && node.isChecked) {
+        return { ...node, children: [] };
+    }
+
+    // Initialize collected paths for the current node
+    let collectedPaths = [];
+
+    // Process children nodes if they exist
+    if (node.children && Array.isArray(node.children) && node.children.length > 0) {
+        node.children.forEach(child => {
+            const result = collectSelectedPathsRecursive(child, depth + 1);
+            if (result) {
+                collectedPaths.push(result);
+            }
+        });
+    }
+
+    // If collectedPaths is not empty, include current node in the path
+    if (collectedPaths.length > 0) {
+        return { ...node, children: collectedPaths };
+    }
+
+    // Return null if no valid paths were collected
+    return null;
+};
+
+// Function to find and collect paths
+const findAndCollectPaths = (data) => {
+    let selectedPaths = [];
+
+    data.forEach(node => {
+        const result = collectSelectedPathsRecursive(node);
+        if (result) {
+            selectedPaths.push(result);
+        }
+    });
+
+    return selectedPaths;
+};
+
+// Example usage with sample data
+const sampleData = [
+    {
+        "id": 1,
+        "name": "Jane Doe",
+        "expanded": true,
+        "isChecked": false,
+        "children": [
+            {
+                "id": 11,
+                "name": "Jane Doe 1st level 1",
+                "expanded": true,
+                "isChecked": false,
+                "children": [
+                    {
+                        "id": 12,
+                        "name": "Jane Doe 2nd level 1",
+                        "expanded": true,
+                        "isChecked": false,
+                        "children": [
+                            {
+                                "id": 13,
+                                "name": "Jane Doe 3rd level 1",
+                                "expanded": true,
+                                "isChecked": false,
+                                "children": [
+                                    {
+                                        "id": 14,
+                                        "name": "Jane Doe 4th level 1",
+                                        "expanded": true,
+                                        "isChecked": true,
+                                        "children": []
+                                    }
+                                ]
+                            },
+                            {
+                                "id": 15,
+                                "name": "Jane Doe 3rd level 2",
+                                "expanded": true,
+                                "isChecked": false,
+                                "children": [
+                                    {
+                                        "id": 16,
+                                        "name": "Jane Doe 4th level 2",
+                                        "expanded": true,
+                                        "isChecked": false,
+                                        "children": []
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+];
+
+// Usage example
+const selectedPaths = findAndCollectPaths(sampleData);
+console.log(JSON.stringify(selectedPaths, null, 2));
