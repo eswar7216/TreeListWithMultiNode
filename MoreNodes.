@@ -1,0 +1,57 @@
+type Subcontract = {
+    name: string;
+    id: number;
+    historyId?: number;
+    active?: boolean;
+    keyId?: number;
+    subcontracts?: Subcontract[];
+};
+
+type Data = {
+    subcontracts: Subcontract[];
+};
+
+type Result = {
+    historyId: number;
+    keyId: number;
+};
+
+const collectHistoryAndKey = (data: Data, condition: 'active' | 'latest' | 'custom'): Result[] | Result | null => {
+    const results: Result[] = [];
+
+    const findResult = (subcontracts: Subcontract[] | undefined, level: number = 1): Result[] | Result | null => {
+        if (!subcontracts || subcontracts.length === 0) return null;
+
+        if (level === 3) {
+            if (condition === 'active') {
+                const match = subcontracts.find(sub => sub.active);
+                return match ? { historyId: match.historyId!, keyId: match.keyId! } : null;
+            } else if (condition === 'latest') {
+                const match = subcontracts[0];
+                return { historyId: match.historyId!, keyId: match.keyId! };
+            } else if (condition === 'custom') {
+                return subcontracts.map(({ historyId, keyId }) => ({ historyId: historyId!, keyId: keyId! }));
+            }
+        }
+
+        for (const subcontract of subcontracts) {
+            const result = findResult(subcontract.subcontracts, level + 1);
+            if (result) return result;
+        }
+
+        return null;
+    };
+
+    for (const subcontract of data.subcontracts) {
+        const result = findResult(subcontract.subcontracts);
+        if (result) {
+            if (condition === 'custom' && Array.isArray(result)) {
+                results.push(...result); // Add all custom results
+            } else {
+                return result; // Return the first match for 'active' or 'latest'
+            }
+        }
+    }
+
+    return condition === 'custom' ? results : null;
+};
