@@ -1,1 +1,139 @@
 
+type Subcontract = {
+    name: string;
+    id: number;
+    historyId?: number;
+    active?: boolean;
+    keyId?: number;
+    subcontracts?: Subcontract[];
+};
+
+type Data = {
+    subcontracts: Subcontract[];
+};
+
+type Result = {
+    historyId?: number;
+    keyId?: number;
+    id?: number;
+};
+
+const collectHistoryAndKey = (data: Data, condition: 'active' | 'latest' | 'custom', idNodes: Set<number>): Result[] | Result | null => {
+    const results: Result[] = [];
+
+    const findResult = (subcontracts: Subcontract[] | undefined, level: number = 1): Result[] | Result | null => {
+        if (!subcontracts || subcontracts.length === 0) return null;
+
+        if (level === 1) {
+            if (condition === 'active' || condition === 'latest') {
+                for (const subcontract of subcontracts) {
+                    if (idNodes.has(subcontract.id)) {
+                        const result = findResult(subcontract.subcontracts, level + 1);
+                        if (result) return result;
+                    }
+                }
+            }
+        } else if (level === 2 && condition === 'custom') {
+            const matchedSubcontracts = subcontracts.filter(sub => idNodes.has(sub.id));
+            if (matchedSubcontracts.length > 0) {
+                return matchedSubcontracts.map(({ id }) => ({ id }));
+            }
+        } else if (level === 3) {
+            if (condition === 'active') {
+                const match = subcontracts.find(sub => sub.active);
+                return match ? { historyId: match.historyId!, keyId: match.keyId! } : null;
+            } else if (condition === 'latest') {
+                const match = subcontracts[0];
+                return { historyId: match.historyId!, keyId: match.keyId! };
+            }
+        }
+
+        for (const subcontract of subcontracts) {
+            const result = findResult(subcontract.subcontracts, level + 1);
+            if (result) return result;
+        }
+
+        return null;
+    };
+
+    for (const subcontract of data.subcontracts) {
+        const result = findResult(subcontract.subcontracts);
+        if (result) {
+            if (condition === 'custom' && Array.isArray(result)) {
+                results.push(...result); // Add all custom results
+            } else {
+                return result; // Return the first match for 'active' or 'latest'
+            }
+        }
+    }
+
+    return condition === 'custom' ? results : null;
+};
+
+// Example usage:
+const json: Data = {
+    "subcontracts": [
+        {
+            "name": "12 Hour",
+            "id": 123,
+            "subcontracts": [
+                {
+                    "name": "12 Hour",
+                    "id": 223,
+                    "subcontracts": [
+                        {
+                            "name": "12 Hour",
+                            "id": 323,
+                            "historyId": 858585858,
+                            "active": true,
+                            "keyId": 84848
+                        },
+                        {
+                            "name": "12 Hour",
+                            "id": 423,
+                            "historyId": 858585858,
+                            "active": false,
+                            "keyId": 84848
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "24 Hour",
+            "id": 124,
+            "subcontracts": [
+                {
+                    "name": "24 Hour",
+                    "id": 224,
+                    "subcontracts": [
+                        {
+                            "name": "24 Hour",
+                            "id": 324,
+                            "historyId": 858585859,
+                            "active": true,
+                            "keyId": 84849
+                        },
+                        {
+                            "name": "24 Hour",
+                            "id": 424,
+                            "historyId": 858585860,
+                            "active": false,
+                            "keyId": 84850
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+};
+
+const idNodes = new Set([123, 124, 224, 323]);
+
+const activeResult = collectHistoryAndKey(json, 'active', idNodes);
+const latestResult = collectHistoryAndKey(json, 'latest', idNodes);
+const customResult = collectHistoryAndKey(json, 'custom', idNodes);
+
+console.log('Active Result:', activeResult); // Should return { historyId: 858585858, keyId: 84848 }
+console.log('Latest Result:', latestResult); // Should return { historyId: 858585859, keyId: 84849 }
+console.log('Custom Result:', customResult); // Should return [{ id: 224 }]
