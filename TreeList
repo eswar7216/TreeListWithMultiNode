@@ -1,140 +1,92 @@
-const collectSelectedPathsRecursive = (node, depth = 1) => {
-    const depthKeyMap = {
-        1: 'levelA',
-        2: 'levelB',
-        3: 'levelC',
-        // For depth 4, we don't need to include children key
-    };
+Sure! Here's a line-by-line explanation of the simplified loadCssInternal function:
 
-    const currentKey = depthKeyMap[depth];
-
-    // If we are at depth 4 and node is checked, return the node without children key
-    if (depth === 4 && node.isChecked) {
-        return { ...node };
-    }
-
-    // Initialize collected paths for the current node
-    let collectedPaths = [];
-
-    // Process children nodes if they exist
-    if (node.children && Array.isArray(node.children) && node.children.length > 0) {
-        node.children.forEach(child => {
-            const result = collectSelectedPathsRecursive(child, depth + 1);
-            if (result) {
-                collectedPaths.push(result);
-            }
-        });
-    }
-
-    // If collectedPaths is not empty, include current node in the path
-    if (collectedPaths.length > 0) {
-        return { ...node, [currentKey]: collectedPaths };
-    }
-
-    // Return null if no valid paths were collected
-    return null;
-};
-
-// Function to find and collect paths
-const findAndCollectPaths = (data) => {
-    let selectedPaths = [];
-
-    data.forEach(node => {
-        const result = collectSelectedPathsRecursive(node);
-        if (result) {
-            selectedPaths.push(result);
-        }
+Code Explanation
+javascript
+Copy code
+const loadCssInternal = (location, isCobrand = false, isClient = false) => {
+Purpose: This function loads a CSS file into the <head> section of the HTML document.
+Parameters:
+location: The URL or path to the CSS file.
+isCobrand: A boolean indicating if the file is the cobrand stylesheet (defaults to false).
+isClient: A boolean indicating if the file is the client stylesheet (defaults to false).
+javascript
+Copy code
+    const head = document.getElementsByTagName('head')[0];
+Purpose: Retrieves the <head> element of the document, where the CSS files will be inserted.
+Result: head now refers to the <head> tag in the DOM.
+javascript
+Copy code
+    const styles = document.createElement('link');
+Purpose: Creates a new <link> element, which will be used to load the CSS file.
+Result: styles is now a <link> element that will later be configured and added to the <head>.
+javascript
+Copy code
+    styles.href = location;
+    styles.rel = 'stylesheet';
+Purpose: Sets the href attribute to the URL/path of the CSS file and defines the rel attribute as "stylesheet".
+Result: The <link> element (styles) is now configured to point to the CSS file.
+javascript
+Copy code
+    const elementId = isClient ? 'clientId' : isCobrand ? 'cobrandId' : uuid.v4();
+    styles.id = elementId;
+Purpose: Determines the id for the <link> element based on the type of CSS file.
+If isClient is true, the id is set to "clientId".
+If isCobrand is true, the id is set to "cobrandId".
+If neither is true, a unique ID is generated using uuid.v4().
+Result: The <link> element now has a specific id, which is used to manage its position in the <head>.
+javascript
+Copy code
+    return new Promise((resolve) => {
+Purpose: The function returns a Promise that will resolve when the stylesheet is successfully loaded.
+Result: Allows asynchronous handling of the CSS loading process, useful for ensuring styles are applied before proceeding.
+javascript
+Copy code
+        styles.addEventListener('load', () => resolve(elementId), false);
+Purpose: Adds an event listener to the <link> element that listens for the load event, which fires when the CSS file is fully loaded.
+Action: When the file is loaded, the promise resolves with the elementId, indicating successful loading.
+javascript
+Copy code
+        const clientStyles = document.getElementById('clientId');
+        const cobrandStyles = document.getElementById('cobrandId');
+Purpose: Checks if there are already elements with the id of "clientId" or "cobrandId" in the document.
+Result: clientStyles and cobrandStyles will refer to the existing elements, if they are found.
+javascript
+Copy code
+        if (isClient) {
+Purpose: Checks if the file being loaded is the client stylesheet (isClient is true).
+javascript
+Copy code
+            clientStyles ? clientStyles.replaceWith(styles) : head.appendChild(styles);
+Purpose: If clientStyles already exists in the document, it is replaced with the new styles element.
+Action: If clientStyles does not exist, the new styles element is appended to the end of the <head>.
+javascript
+Copy code
+        } else if (isCobrand) {
+Purpose: If the file is the cobrand stylesheet (isCobrand is true), this block is executed.
+javascript
+Copy code
+            cobrandStyles ? cobrandStyles.replaceWith(styles) : (clientStyles ? clientStyles.before(styles) : head.appendChild(styles));
+Purpose:
+If cobrandStyles already exists, it is replaced with the new styles element.
+If clientStyles exists but cobrandStyles does not, the new styles element is inserted before clientStyles.
+If neither exists, the new styles element is appended to the end of the <head>.
+javascript
+Copy code
+        } else {
+Purpose: This block handles the case where the file is neither the client nor the cobrand stylesheet (i.e., any other CSS file).
+javascript
+Copy code
+            cobrandStyles ? cobrandStyles.before(styles) : (clientStyles ? clientStyles.before(styles) : head.appendChild(styles));
+Purpose:
+If cobrandStyles exists, the new styles element is inserted before it.
+If cobrandStyles does not exist but clientStyles does, the new styles element is inserted before clientStyles.
+If neither exists, the new styles element is appended to the end of the <head>.
+javascript
+Copy code
     });
-
-    return selectedPaths;
 };
-
-// Example usage with sample data
-const sampleData = [
-    {
-        "id": 1,
-        "name": "Jane Doe",
-        "expanded": true,
-        "isChecked": false,
-        "children": [
-            {
-                "id": 11,
-                "name": "Jane Doe 1st level 1",
-                "expanded": true,
-                "isChecked": false,
-                "children": [
-                    {
-                        "id": 12,
-                        "name": "Jane Doe 2nd level 1",
-                        "expanded": true,
-                        "isChecked": false,
-                        "children": [
-                            {
-                                "id": 13,
-                                "name": "Jane Doe 3rd level 1",
-                                "expanded": true,
-                                "isChecked": false,
-                                "children": [
-                                    {
-                                        "id": 14,
-                                        "name": "Jane Doe 4th level 1",
-                                        "expanded": true,
-                                        "isChecked": true
-                                    }
-                                ]
-                            },
-                            {
-                                "id": 15,
-                                "name": "Jane Doe 3rd level 2",
-                                "expanded": true,
-                                "isChecked": false,
-                                "children": [
-                                    {
-                                        "id": 16,
-                                        "name": "Jane Doe 4th level 2",
-                                        "expanded": true,
-                                        "isChecked": false
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            },
-            {
-                "id": 21,
-                "name": "Jane Doe 1st level 2",
-                "expanded": true,
-                "isChecked": false,
-                "children": [
-                    {
-                        "id": 22,
-                        "name": "Jane Doe 2nd level 2",
-                        "expanded": true,
-                        "isChecked": false,
-                        "children": [
-                            {
-                                "id": 23,
-                                "name": "Jane Doe 3rd level 3",
-                                "expanded": true,
-                                "isChecked": false,
-                                "children": [
-                                    {
-                                        "id": 24,
-                                        "name": "Jane Doe 4th level 3",
-                                        "expanded": true,
-                                        "isChecked": true
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
-];
-
-// Usage example
-const selectedPaths = findAndCollectPaths(sampleData);
-console.log(JSON.stringify(selectedPaths, null, 2));
+Purpose: Closes the promise and the function.
+Result: The function returns a Promise that resolves once the CSS file is loaded, ensuring that the CSS file is loaded in the correct order in the DOM.
+Summary
+Order Enforcement: This function ensures that the client stylesheet (clientId) is always the last in the <head>, the cobrand stylesheet (cobrandId) is the second to last, and all other stylesheets are loaded before them.
+Simplicity: The function is designed to be readable and easy to maintain while handling the specific requirements for stylesheet loading order.
