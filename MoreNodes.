@@ -1,1 +1,53 @@
 
+const loadCssInternal = (location, isCobrand = false, isClient = false) => {
+    const head = document.getElementsByTagName('head')[0];
+    const styles = document.createElement('link');
+
+    styles.href = location;
+    styles.rel = 'stylesheet';
+
+    // Determine the id based on the file type
+    const elementId = isClient ? 'clientId' : isCobrand ? 'cobrandId' : uuid.v4();
+    styles.id = elementId;
+
+    return new Promise((resolve) => {
+        styles.addEventListener('load', () => resolve(elementId), false);
+
+        const clientStyles = document.getElementById('clientId');
+        const cobrandStyles = document.getElementById('cobrandId');
+
+        if (isClient) {
+            // Append client styles at the end
+            clientStyles ? clientStyles.replaceWith(styles) : head.appendChild(styles);
+        } else if (isCobrand) {
+            // Insert cobrand styles before client styles, or at the end if client styles don't exist
+            cobrandStyles ? cobrandStyles.replaceWith(styles) : (clientStyles ? clientStyles.before(styles) : head.appendChild(styles));
+        } else {
+            // Insert other styles before cobrand styles, or before client styles, or at the end
+            cobrandStyles ? cobrandStyles.before(styles) : (clientStyles ? clientStyles.before(styles) : head.appendChild(styles));
+        }
+    });
+};
+
+
+
+How It Works:
+ID Assignment:
+
+Client File (isClient): Assigned the ID clientId.
+Cobrand File (isCobrand): Assigned the ID cobrandId.
+Other Files: Assigned a unique ID using uuid.v4().
+Insertion Logic:
+
+Client File: Always appended at the end of the head.
+Cobrand File: Inserted before the client file, if it exists; otherwise, it's appended at the end.
+Other Files: Inserted before the cobrand file, if it exists; otherwise, it's inserted before the client file, or at the end if neither exists.
+Promise Handling:
+
+The promise resolves when the stylesheet is loaded, with the element ID passed to the resolve function.
+Benefits:
+Readability: The function is easier to understand with clear ID management.
+Order Preservation: The function ensures that the client file is always last, the cobrand file is second to last, and all other files are loaded before them.
+Flexibility: The use of IDs avoids conflicts and ensures that files are easily identifiable in the DOM.
+
+
