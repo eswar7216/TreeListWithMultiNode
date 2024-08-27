@@ -1,1 +1,32 @@
 
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <version>3.0.0</version>
+            <executions>
+                <execution>
+                    <id>exec</id>
+                    <phase>package</phase>
+                    <goals>
+                        <goal>java</goal>
+                    </goals>
+                    <configuration>
+                        <mainClass>com.example.YourMainClass</mainClass>
+                        <arguments>
+                            <argument>--spring.profiles.active=default-profile</argument>
+                        </arguments>
+                        <systemProperties>
+                            <property>
+                                <name>spring.profiles.active</name>
+                                <value>default-profile</value>
+                            </property>
+                        </systemProperties>
+                        <includeSystemClasspath>false</includeSystemClasspath>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+</build>
