@@ -1,65 +1,32 @@
-<build>
-  <plugins>
-    <!-- Maven Shade Plugin configuration -->
-    <plugin>
-      <groupId>org.apache.maven.plugins</groupId>
-      <artifactId>maven-shade-plugin</artifactId>
-      <version>3.2.4</version> <!-- Ensure this version is compatible with Java 17 and Spring Boot 3.2.3 -->
-      <configuration>
-        <relocations>
-          <relocation>
-            <pattern>com.zaxxer.hikari</pattern>
-            <shadedPattern>com.zaxxer.hikari.cigna</shadedPattern>
-          </relocation>
-        </relocations>
-        <filters>
-          <filter>
-            <artifact>*:*</artifact>
-            <excludes>
-              <exclude>META-INF/*.SF</exclude>
-              <exclude>META-INF/*.DSA</exclude>
-              <exclude>META-INF/*.RSA</exclude>
-              <exclude>META-INF/*.XML</exclude>
-            </excludes>
-          </filter>
-        </filters>
-        <transforms>
-          <transformer implementation="org.apache.maven.plugins.shade.resource.AppendTransformer">
-            <!-- Specify the name of the file to be merged -->
-            <resource>META-INF/spring.handlers</resource>
-          </transformer>
-          <transformer implementation="org.apache.maven.plugins.shade.resource.PropertiesFileTransformer">
-            <resource>META-INF/spring.factories</resource>
-          </transformer>
-          <transformer implementation="org.apache.maven.plugins.shade.resource.AppendTransformer">
-            <resource>META-INF/spring.schemas</resource>
-            <resource>META-INF/kie.conf</resource>
-          </transformer>
-          <transformer implementation="org.apache.maven.plugins.shade.resource.ServiceResourceTransformer"/>
-          <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-            <mainClass>com.main.MainClass</mainClass> <!-- Specify the main class of your application -->
-          </transformer>
-        </transforms>
-      </configuration>
-      <executions>
-        <execution>
-          <phase>package</phase>
-          <goals>
-            <goal>shade</goal>
-          </goals>
-        </execution>
-      </executions>
-    </plugin>
+// useScreenSize.test.js
+import { renderHook } from '@testing-library/react-hooks';
+import useScreenSize from './useScreenSize';
 
-    <!-- Maven Compiler Plugin to support Java 17 -->
-    <plugin>
-      <groupId>org.apache.maven.plugins</groupId>
-      <artifactId>maven-compiler-plugin</artifactId>
-      <version>3.11.0</version> <!-- Ensure this version supports Java 17 -->
-      <configuration>
-        <source>17</source>
-        <target>17</target>
-      </configuration>
-    </plugin>
-  </plugins>
-</build>
+describe('useScreenSize', () => {
+  it('should return true for tablet size and false for desktop size', () => {
+    // Mock the matchMedia function
+    window.matchMedia = jest.fn().mockImplementation(query => ({
+      matches: query === '(max-width: 768px)', // Mock behavior for tablet
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+    }));
+
+    // Test for tablet size
+    const { result } = renderHook(() => useScreenSize());
+    expect(result.current).toBe(true);
+
+    // Change the mock to simulate desktop size
+    window.matchMedia = jest.fn().mockImplementation(query => ({
+      matches: query === '(max-width: 768px)' ? false : true, // Mock behavior for desktop
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+    }));
+
+    // Trigger the resize event
+    window.dispatchEvent(new Event('resize'));
+
+    // Re-test for desktop size
+    const { result: resultAfterResize } = renderHook(() => useScreenSize());
+    expect(resultAfterResize.current).toBe(false);
+  });
+});
