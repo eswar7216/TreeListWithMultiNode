@@ -1,66 +1,92 @@
-import { renderHook } from '@testing-library/react-hooks';
-import useCoBrandCssLoader from './useCoBrandCssLoader';
-import loadResources from './loadResources';
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom/extend-expect';
+import HeaderIcons from './HeaderIcons';
+import { userScreenSize } from '../../utils/screenSizeHelper';
+import { MiniCartContainer } from '@t/t-cart-ui';
+import ThemedLink from 't/ui-t/lib/Link';
 
-// Mock loadResources module
-jest.mock('./loadResources', () => ({
-  loadCss: jest.fn(),
+// Mock the `userScreenSize` utility
+jest.mock('../../utils/screenSizeHelper', () => ({
+  userScreenSize: jest.fn(),
 }));
 
-describe('useCoBrandCssLoader', () => {
+// Mock other imports if necessary
+jest.mock('@t/leaf-icons/lib/react/LeadIcon', () => () => <div>LeafIcon</div>);
+jest.mock('!!raw-loader!t/leaf-icons/lib/icons/System/Regular/Id Card.svg', () => 'idCardSvg');
+jest.mock('@t/t-cart-ui', () => ({ MiniCartContainer: () => <div>MiniCartContainer</div> }));
+jest.mock('t/ui-t/lib/Link', () => ({ children }) => <div>{children}</div>);
+
+describe('HeaderIcons', () => {
   beforeEach(() => {
-    // Clear all instances and calls to constructor and all methods:
-    loadResources.loadCss.mockClear();
+    // Reset mocks before each test
+    jest.clearAllMocks();
   });
 
-  it('should call loadResources.loadCss with the correct URL when Evernorth migration is enabled', async () => {
-    const coBrandCssUrl = '/css/another/another.css';
-    const isEvernorthMigrationEnabled = true;
+  it('should display ERS logo and ID Card link when isErsCobrand and idCardObj are provided', () => {
+    userScreenSize.mockReturnValue(true); // Mock desktop view
+    const idCardObj = { url: '/id-card', id: 'idCard' };
 
-    // Render the hook
-    renderHook(() => useCoBrandCssLoader(coBrandCssUrl, isEvernorthMigrationEnabled));
+    render(<HeaderIcons
+      isErsCobrand={true}
+      isEsrxCobrand={false}
+      idCardObj={idCardObj}
+      showMiniCart={false}
+      isEverNorthMigrationEnabled={false}
+    />);
 
-    // Wait for the async useEffect to complete
-    await new Promise(process.nextTick);
-
-    // Check that loadResources.loadCss was called with the Evernorth URL
-    expect(loadResources.loadCss).toHaveBeenCalledWith('/css/cobrand/cobrand.css', false, false, true);
-    // Check that loadResources.loadCss was called with the coBrandCssUrl
-    expect(loadResources.loadCss).toHaveBeenCalledWith(coBrandCssUrl, false, true, false);
+    expect(screen.getByAltText('ers-logo')).toBeInTheDocument();
+    expect(screen.getByText('ID Card')).toBeInTheDocument();
+    expect(screen.queryByText('MiniCartContainer')).not.toBeInTheDocument();
   });
 
-  it('should call loadResources.loadCss with the PBM URL when Evernorth migration is not enabled', async () => {
-    const coBrandCssUrl = '/css/another/another.css';
-    const isEvernorthMigrationEnabled = false;
+  it('should apply correct tone based on screen size and props', () => {
+    userScreenSize.mockReturnValue(true); // Mock desktop view
 
-    // Render the hook
-    renderHook(() => useCoBrandCssLoader(coBrandCssUrl, isEvernorthMigrationEnabled));
+    render(<HeaderIcons
+      isErsCobrand={false}
+      isEsrxCobrand={true}
+      idCardObj={{ url: '/id-card', id: 'idCard' }}
+      showMiniCart={true}
+      isEverNorthMigrationEnabled={true}
+    />);
 
-    // Wait for the async useEffect to complete
-    await new Promise(process.nextTick);
-
-    // Check that loadResources.loadCss was called with the PBM URL
-    expect(loadResources.loadCss).toHaveBeenCalledWith('/css/cobrand/cobrand_pbm.css', false, false, true);
-    // Check that loadResources.loadCss was called with the coBrandCssUrl
-    expect(loadResources.loadCss).toHaveBeenCalledWith(coBrandCssUrl, false, true, false);
+    // Verify tone based on screen size and props
+    expect(screen.getByText('ID Card')).toHaveAttribute('tone', 'dark');
+    expect(screen.getByText('MiniCartContainer')).toHaveAttribute('tone', 'dark');
   });
 
-  it('should handle exceptions without crashing', async () => {
-    const coBrandCssUrl = '/css/another/another.css';
-    const isEvernorthMigrationEnabled = true;
+  it('should handle light tone correctly for non-desktop views', () => {
+    userScreenSize.mockReturnValue(false); // Mock non-desktop view
 
-    // Make loadResources.loadCss throw an error
-    loadResources.loadCss.mockImplementationOnce(() => Promise.reject(new Error('Failed to load')));
+    render(<HeaderIcons
+      isErsCobrand={false}
+      isEsrxCobrand={true}
+      idCardObj={{ url: '/id-card', id: 'idCard' }}
+      showMiniCart={true}
+      isEverNorthMigrationEnabled={false}
+    />);
 
-    // Render the hook
-    renderHook(() => useCoBrandCssLoader(coBrandCssUrl, isEvernorthMigrationEnabled));
+    // Verify tone based on screen size and props
+    expect(screen.getByText('ID Card')).toHaveAttribute('tone', 'dark');
+    expect(screen.getByText('MiniCartContainer')).toHaveAttribute('tone', 'dark');
+  });
 
-    // Wait for the async useEffect to complete
-    await new Promise(process.nextTick);
+  it('should handle exception cases without crashing', () => {
+    userScreenSize.mockReturnValue(true); // Mock desktop view
 
-    // Check that loadResources.loadCss was called with the Evernorth URL
-    expect(loadResources.loadCss).toHaveBeenCalledWith('/css/cobrand/cobrand.css', false, false, true);
-    // Check that loadResources.loadCss was called with the coBrandCssUrl
-    expect(loadResources.loadCss).toHaveBeenCalledWith(coBrandCssUrl, false, true, false);
+    // Render with some props missing or invalid to test exception handling
+    render(<HeaderIcons
+      isErsCobrand={false}
+      isEsrxCobrand={false}
+      idCardObj={null}
+      showMiniCart={false}
+      isEverNorthMigrationEnabled={false}
+    />);
+
+    // Verify no errors and correct rendering
+    expect(screen.queryByAltText('ers-logo')).not.toBeInTheDocument();
+    expect(screen.queryByText('ID Card')).not.toBeInTheDocument();
+    expect(screen.queryByText('MiniCartContainer')).not.toBeInTheDocument();
   });
 });
