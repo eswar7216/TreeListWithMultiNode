@@ -1,32 +1,66 @@
-// useScreenSize.test.js
 import { renderHook } from '@testing-library/react-hooks';
-import useScreenSize from './useScreenSize';
+import useCoBrandCssLoader from './useCoBrandCssLoader';
+import loadResources from './loadResources';
 
-describe('useScreenSize', () => {
-  it('should return true for tablet size and false for desktop size', () => {
-    // Mock the matchMedia function
-    window.matchMedia = jest.fn().mockImplementation(query => ({
-      matches: query === '(max-width: 768px)', // Mock behavior for tablet
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    }));
+// Mock loadResources module
+jest.mock('./loadResources', () => ({
+  loadCss: jest.fn(),
+}));
 
-    // Test for tablet size
-    const { result } = renderHook(() => useScreenSize());
-    expect(result.current).toBe(true);
+describe('useCoBrandCssLoader', () => {
+  beforeEach(() => {
+    // Clear all instances and calls to constructor and all methods:
+    loadResources.loadCss.mockClear();
+  });
 
-    // Change the mock to simulate desktop size
-    window.matchMedia = jest.fn().mockImplementation(query => ({
-      matches: query === '(max-width: 768px)' ? false : true, // Mock behavior for desktop
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    }));
+  it('should call loadResources.loadCss with the correct URL when Evernorth migration is enabled', async () => {
+    const coBrandCssUrl = '/css/another/another.css';
+    const isEvernorthMigrationEnabled = true;
 
-    // Trigger the resize event
-    window.dispatchEvent(new Event('resize'));
+    // Render the hook
+    renderHook(() => useCoBrandCssLoader(coBrandCssUrl, isEvernorthMigrationEnabled));
 
-    // Re-test for desktop size
-    const { result: resultAfterResize } = renderHook(() => useScreenSize());
-    expect(resultAfterResize.current).toBe(false);
+    // Wait for the async useEffect to complete
+    await new Promise(process.nextTick);
+
+    // Check that loadResources.loadCss was called with the Evernorth URL
+    expect(loadResources.loadCss).toHaveBeenCalledWith('/css/cobrand/cobrand.css', false, false, true);
+    // Check that loadResources.loadCss was called with the coBrandCssUrl
+    expect(loadResources.loadCss).toHaveBeenCalledWith(coBrandCssUrl, false, true, false);
+  });
+
+  it('should call loadResources.loadCss with the PBM URL when Evernorth migration is not enabled', async () => {
+    const coBrandCssUrl = '/css/another/another.css';
+    const isEvernorthMigrationEnabled = false;
+
+    // Render the hook
+    renderHook(() => useCoBrandCssLoader(coBrandCssUrl, isEvernorthMigrationEnabled));
+
+    // Wait for the async useEffect to complete
+    await new Promise(process.nextTick);
+
+    // Check that loadResources.loadCss was called with the PBM URL
+    expect(loadResources.loadCss).toHaveBeenCalledWith('/css/cobrand/cobrand_pbm.css', false, false, true);
+    // Check that loadResources.loadCss was called with the coBrandCssUrl
+    expect(loadResources.loadCss).toHaveBeenCalledWith(coBrandCssUrl, false, true, false);
+  });
+
+  it('should handle exceptions without crashing', async () => {
+    const coBrandCssUrl = '/css/another/another.css';
+    const isEvernorthMigrationEnabled = true;
+
+    // Make loadResources.loadCss throw an error
+    loadResources.loadCss.mockImplementationOnce(() => Promise.reject(new Error('Failed to load')));
+
+    // Render the hook
+    renderHook(() => useCoBrandCssLoader(coBrandCssUrl, isEvernorthMigrationEnabled));
+
+    // Wait for the async useEffect to complete
+    await new Promise(process.nextTick);
+
+    // Check that loadResources.loadCss was called with the Evernorth URL
+    expect(loadResources.loadCss).toHaveBeenCalledWith('/css/cobrand/cobrand.css', false, false, true);
+    // Check that loadResources.loadCss was called with the coBrandCssUrl
+    expect(loadResources.loadCss).toHaveBeenCalledWith(coBrandCssUrl, false, true, false);
   });
 });
