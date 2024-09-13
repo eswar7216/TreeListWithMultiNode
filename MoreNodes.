@@ -1,15 +1,21 @@
-import styles from 'style-loader?injectType=lazyStyleTag!css-loader!postcss-loader!@esi/leaf-design-tokens/lib/web/brands/evernorth/css/token_pbm.css';
-
 module.exports = {
-  plugins: [
-    require('postcss-url')({
-      url: (asset) => {
-        // Rewrite ./fonts to ../../fonts
-        if (asset.url.startsWith('./fonts')) {
-          return asset.url.replace('./fonts', '../../fonts');
-        }
-        return asset.url;
-      }
-    })
-  ]
+  module: {
+    rules: [
+      {
+        test: /\.css$/, // Process .css files
+        use: [
+          'style-loader?injectType=lazyStyleTag', // Lazy-load the styles
+          {
+            loader: 'css-loader', // Process CSS files
+            options: {
+              sourceMap: true, // Enable source maps for better debugging
+              url: true,       // Enable processing of URLs in CSS
+              publicPath: '../../', // Modify the URL paths to prepend ../../
+            },
+          },
+          'resolve-url-loader' // Ensure proper resolution of relative paths
+        ],
+      },
+    ],
+  },
 };
