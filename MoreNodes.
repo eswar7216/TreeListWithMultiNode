@@ -1,19 +1,35 @@
+// Webpack configuration for your library project
 module.exports = {
   module: {
     rules: [
       {
-        test: /\.css$/, // Process .css files
+        test: /\.css$/,
         use: [
-          'style-loader?injectType=lazyStyleTag', // Lazy-load the styles
+          'style-loader?injectType=lazyStyleTag', // Lazy load CSS
           {
-            loader: 'css-loader', // Process CSS files
+            loader: 'css-loader',
             options: {
-              sourceMap: true, // Enable source maps for better debugging
-              url: true,       // Enable processing of URLs in CSS
-              publicPath: '../../', // Modify the URL paths to prepend ../../
+              sourceMap: true,
             },
           },
-          'resolve-url-loader' // Ensure proper resolution of relative paths
+          {
+            loader: 'postcss-loader',
+            options: {
+              postcssOptions: {
+                plugins: [
+                  require('postcss-url')({
+                    url: (asset) => {
+                      // Rewrite ./fonts to ../../fonts
+                      if (asset.url.startsWith('./fonts')) {
+                        return asset.url.replace('./fonts', '../../fonts');
+                      }
+                      return asset.url;
+                    }
+                  })
+                ]
+              }
+            }
+          },
         ],
       },
     ],
