@@ -18,9 +18,8 @@ module.exports = {
                 plugins: [
                   require('postcss-url')({
                     url: (asset) => {
-                      // Modify the URL to adjust the font path
-                      // Changing '../assets/fonts/' to '../../assets/fonts/'
-                      if (asset.url.startsWith('../assets/fonts')) {
+                      // Adjust the URL to change '../assets/fonts/' to '../../assets/fonts/'
+                      if (asset.url.includes('../assets/fonts')) {
                         return asset.url.replace('../assets/fonts', '../../assets/fonts');
                       }
                       return asset.url;
@@ -32,6 +31,16 @@ module.exports = {
           },
         ],
       },
+      {
+        test: /\.(woff|woff2|eot|ttf|otf)$/, // Match font files
+        type: 'asset/resource', // Emit fonts as separate files
+        generator: {
+          filename: 'assets/fonts/[name].[hash][ext]', // Output path for fonts
+        },
+      },
     ],
   },
 };
+
+
+import styles from 'style-loader?injectType=lazyStyleTag!css-loader!postcss-loader!@esi/leaf-design-tokens/lib/web/brands/evernorth/css/token_pbm.css';
