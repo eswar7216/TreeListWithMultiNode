@@ -4,22 +4,24 @@ module.exports = {
       {
         test: /\.css$/,
         use: [
-          'style-loader?injectType=lazyStyleTag', // Lazy load the styles
+          'style-loader?injectType=lazyStyleTag',
           {
             loader: 'css-loader',
             options: {
               sourceMap: true,
+              importLoaders: 1, // Ensures that postcss-loader processes @import statements
             },
           },
           {
-            loader: 'postcss-loader', // Process the CSS with postcss-loader
+            loader: 'postcss-loader',
             options: {
+              sourceMap: true, // Make sure source maps are enabled
               postcssOptions: {
                 plugins: [
                   require('postcss-url')({
                     url: (asset) => {
-                      // Adjust the URL to change '../assets/fonts/' to '../../assets/fonts/'
-                      if (asset.url.includes('../assets/fonts')) {
+                      // Rewrite URLs for fonts
+                      if (asset.url.startsWith('../assets/fonts')) {
                         return asset.url.replace('../assets/fonts', '../../assets/fonts');
                       }
                       return asset.url;
@@ -31,16 +33,6 @@ module.exports = {
           },
         ],
       },
-      {
-        test: /\.(woff|woff2|eot|ttf|otf)$/, // Match font files
-        type: 'asset/resource', // Emit fonts as separate files
-        generator: {
-          filename: 'assets/fonts/[name].[hash][ext]', // Output path for fonts
-        },
-      },
     ],
   },
 };
-
-
-import styles from 'style-loader?injectType=lazyStyleTag!css-loader!postcss-loader!@esi/leaf-design-tokens/lib/web/brands/evernorth/css/token_pbm.css';
