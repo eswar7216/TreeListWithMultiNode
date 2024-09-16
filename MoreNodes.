@@ -1,11 +1,10 @@
-// Webpack configuration for your library project
 module.exports = {
   module: {
     rules: [
       {
         test: /\.css$/,
         use: [
-          'style-loader?injectType=lazyStyleTag', // Lazy load CSS
+          'style-loader?injectType=lazyStyleTag', // Lazy load the styles
           {
             loader: 'css-loader',
             options: {
@@ -13,22 +12,23 @@ module.exports = {
             },
           },
           {
-            loader: 'postcss-loader',
+            loader: 'postcss-loader', // Process the CSS with postcss-loader
             options: {
               postcssOptions: {
                 plugins: [
                   require('postcss-url')({
                     url: (asset) => {
-                      // Rewrite ./fonts to ../../fonts
-                      if (asset.url.startsWith('./fonts')) {
-                        return asset.url.replace('./fonts', '../../fonts');
+                      // Modify the URL to adjust the font path
+                      // Changing '../assets/fonts/' to '../../assets/fonts/'
+                      if (asset.url.startsWith('../assets/fonts')) {
+                        return asset.url.replace('../assets/fonts', '../../assets/fonts');
                       }
                       return asset.url;
-                    }
-                  })
-                ]
-              }
-            }
+                    },
+                  }),
+                ],
+              },
+            },
           },
         ],
       },
