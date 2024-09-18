@@ -1,4 +1,11 @@
-import styles from 'style-loader?{"injectType":"lazyStyleTag","attributes":{"id":"my-style-id"}}!css-loader!@esi/leaf-design-tokens/lib/web/brands/evernorth/css/token_pbm.css';
-
-// Inject the styles into the DOM
-styles.use();
+// postcss.config.js
+module.exports = {
+  plugins: [
+    require('postcss-url')({
+      url: (asset) => {
+        // Rewrite paths from '../.././assets/fonts' to './assets/fonts'
+        return asset.url.replace('../.././assets/fonts', './assets/fonts');
+      },
+    }),
+  ],
+};
