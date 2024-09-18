@@ -1,38 +1,4 @@
-module.exports = {
-  module: {
-    rules: [
-      {
-        test: /\.css$/,
-        use: [
-          'style-loader?injectType=lazyStyleTag',
-          {
-            loader: 'css-loader',
-            options: {
-              sourceMap: true,
-              importLoaders: 1, // Ensures that postcss-loader processes @import statements
-            },
-          },
-          {
-            loader: 'postcss-loader',
-            options: {
-              sourceMap: true, // Make sure source maps are enabled
-              postcssOptions: {
-                plugins: [
-                  require('postcss-url')({
-                    url: (asset) => {
-                      // Rewrite URLs for fonts
-                      if (asset.url.startsWith('../assets/fonts')) {
-                        return asset.url.replace('../assets/fonts', '../../assets/fonts');
-                      }
-                      return asset.url;
-                    },
-                  }),
-                ],
-              },
-            },
-          },
-        ],
-      },
-    ],
-  },
-};
+import styles from 'style-loader?{"injectType":"lazyStyleTag","attributes":{"id":"my-style-id"}}!css-loader!@esi/leaf-design-tokens/lib/web/brands/evernorth/css/token_pbm.css';
+
+// Inject the styles into the DOM
+styles.use();
