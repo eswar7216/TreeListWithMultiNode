@@ -1,43 +1,50 @@
-public List<HierarchyRule> queryAcrossAllHierarchyLevels(Long hierarchyId) {
-    // Get CriteriaBuilder from session
-    CriteriaBuilder cb = session.getCriteriaBuilder();
+public List<HierarchyRule> criteriaBuilder(
+    FindRuleExceptionsForHierarchyRequest request, 
+    long timeRemaining, 
+    long timeLineHold, 
+    Date effDate, 
+    Date endDate, 
+    String hierarchyLevel, 
+    Long hierarchyId
+) {
+    // Get the CriteriaBuilder from session
+    CriteriaBuilder cb = currentSession().getCriteriaBuilder();
 
-    // Create main query for HierarchyRule
+    // Main CriteriaQuery for HierarchyRule
     CriteriaQuery<HierarchyRule> cq = cb.createQuery(HierarchyRule.class);
     Root<HierarchyRule> root = cq.from(HierarchyRule.class);
 
-    // Subquery for orgHierarchy
-    Subquery<Long> orgSubquery = cq.subquery(Long.class);
-    Root<HierarchyTimelines> orgRoot = orgSubquery.from(HierarchyTimelines.class);
-    orgSubquery.select(orgRoot.get("orgHierarchy").get("hierarchyId"))
-        .where(cb.equal(orgRoot.get("orgHierarchy").get("hierarchyId"), hierarchyId));
+    // Subquery for the provided hierarchy level (e.g., orgHierarchy, carrierHierarchy, etc.)
+    Subquery<Long> subquery = cq.subquery(Long.class);
+    Root<HierarchyTimelines> subRoot = subquery.from(HierarchyTimelines.class);
 
-    // Subquery for carrierHierarchy
-    Subquery<Long> carrierSubquery = cq.subquery(Long.class);
-    Root<HierarchyTimelines> carrierRoot = carrierSubquery.from(HierarchyTimelines.class);
-    carrierSubquery.select(carrierRoot.get("carrierHierarchy").get("hierarchyId"))
-        .where(cb.equal(carrierRoot.get("orgHierarchy").get("hierarchyId"), hierarchyId));
+    // Dynamically select the hierarchy field based on the hierarchyLevel input
+    switch (hierarchyLevel) {
+        case "orgHierarchy":
+            subquery.select(subRoot.get("orgHierarchy").get("hierarchyId"));
+            break;
+        case "carrierHierarchy":
+            subquery.select(subRoot.get("carrierHierarchy").get("hierarchyId"));
+            break;
+        case "contractHierarchy":
+            subquery.select(subRoot.get("contractHierarchy").get("hierarchyId"));
+            break;
+        case "benefitPlanHierarchy":
+            subquery.select(subRoot.get("benefitPlanHierarchy").get("hierarchyId"));
+            break;
+        case "groupHierarchy":
+            subquery.select(subRoot.get("groupHierarchy").get("hierarchyId"));
+            break;
+        default:
+            throw new IllegalArgumentException("Invalid hierarchy level: " + hierarchyLevel);
+    }
 
-    // Subquery for contractHierarchy
-    Subquery<Long> contractSubquery = cq.subquery(Long.class);
-    Root<HierarchyTimelines> contractRoot = contractSubquery.from(HierarchyTimelines.class);
-    contractSubquery.select(contractRoot.get("contractHierarchy").get("hierarchyId"))
-        .where(cb.equal(contractRoot.get("orgHierarchy").get("hierarchyId"), hierarchyId));
+    // Apply restriction on the hierarchy level
+    subquery.where(cb.equal(subRoot.get(hierarchyLevel).get("hierarchyId"), hierarchyId));
 
-    // Subquery for benefitHierarchy
-    Subquery<Long> benefitSubquery = cq.subquery(Long.class);
-    Root<HierarchyTimelines> benefitRoot = benefitSubquery.from(HierarchyTimelines.class);
-    benefitSubquery.select(benefitRoot.get("benefitHierarchy").get("hierarchyId"))
-        .where(cb.equal(benefitRoot.get("orgHierarchy").get("hierarchyId"), hierarchyId));
+    // Add subquery to the main CriteriaQuery
+    cq.where(cb.in(root.get("hierarchy").get("hierarchyId")).value(subquery));
 
-    // Combine subqueries in main query
-    cq.where(cb.or(
-        cb.in(root.get("hierarchyId")).value(orgSubquery),
-        cb.in(root.get("hierarchyId")).value(carrierSubquery),
-        cb.in(root.get("hierarchyId")).value(contractSubquery),
-        cb.in(root.get("hierarchyId")).value(benefitSubquery)
-    ));
-
-    // Execute query and return results
+    // Execute the query and return the results
     return session.createQuery(cq).getResultList();
 }
