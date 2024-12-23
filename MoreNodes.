@@ -1,50 +1,117 @@
-public List<HierarchyRule> criteriaBuilder(
-    FindRuleExceptionsForHierarchyRequest request, 
-    long timeRemaining, 
-    long timeLineHold, 
-    Date effDate, 
-    Date endDate, 
-    String hierarchyLevel, 
-    Long hierarchyId
-) {
-    // Get the CriteriaBuilder from session
-    CriteriaBuilder cb = currentSession().getCriteriaBuilder();
+import json
+import time
+import pandas as pd
+from dotenv import load_dotenv, find_dotenv
+import openai
 
-    // Main CriteriaQuery for HierarchyRule
-    CriteriaQuery<HierarchyRule> cq = cb.createQuery(HierarchyRule.class);
-    Root<HierarchyRule> root = cq.from(HierarchyRule.class);
+# Load environment variables
+load_dotenv(find_dotenv())
 
-    // Subquery for the provided hierarchy level (e.g., orgHierarchy, carrierHierarchy, etc.)
-    Subquery<Long> subquery = cq.subquery(Long.class);
-    Root<HierarchyTimelines> subRoot = subquery.from(HierarchyTimelines.class);
+# OpenAI API Call Function
+def get_completion_from_messages(conversations, retries=10, delay=60):
+    """
+    Sends a request to OpenAI API to analyze conversations and returns JSON responses.
+    """
+    # System message template
+    system_message = """
+    sentiment: Provide customer sentiment either Positive/Negative.
 
-    // Dynamically select the hierarchy field based on the hierarchyLevel input
-    switch (hierarchyLevel) {
-        case "orgHierarchy":
-            subquery.select(subRoot.get("orgHierarchy").get("hierarchyId"));
-            break;
-        case "carrierHierarchy":
-            subquery.select(subRoot.get("carrierHierarchy").get("hierarchyId"));
-            break;
-        case "contractHierarchy":
-            subquery.select(subRoot.get("contractHierarchy").get("hierarchyId"));
-            break;
-        case "benefitPlanHierarchy":
-            subquery.select(subRoot.get("benefitPlanHierarchy").get("hierarchyId"));
-            break;
-        case "groupHierarchy":
-            subquery.select(subRoot.get("groupHierarchy").get("hierarchyId"));
-            break;
-        default:
-            throw new IllegalArgumentException("Invalid hierarchy level: " + hierarchyLevel);
+    summary: Provide a concise summary that clearly outlines the customer's inquiry and the agent's actions.
+    Limit the summary's length to ensure accuracy and clarity.
+
+    subject: Generate a subject line that encapsulates the main theme or focus of the conversation.
+
+    transcript: Include the original transcript and replace ALL personally identifiable information 
+    (i.e., ALL names including part or full names, addresses including states and cities, phone numbers) 
+    replaced with '****', dates should remain visible.
+
+    Respond with only the following JSON format and nothing else. Use '###' as a delimiter between JSON objects:
+    {
+        "sentiment": "",
+        "summary": "",
+        "subject": "",
+        "transcript": ""
     }
+    """
 
-    // Apply restriction on the hierarchy level
-    subquery.where(cb.equal(subRoot.get(hierarchyLevel).get("hierarchyId"), hierarchyId));
+    # Prompt creation
+    prompt = f'{system_message}\n{conversations}'
 
-    // Add subquery to the main CriteriaQuery
-    cq.where(cb.in(root.get("hierarchy").get("hierarchyId")).value(subquery));
+    for attempt in range(retries):
+        try:
+            # Make API call
+            print(f"Making call to OpenAI API...")
+            response = openai.Completion.create(
+                engine="ai-coe-gpt4-32k",
+                prompt=prompt,
+                max_tokens=31000
+            )
+            # Extract response
+            response_content = response['choices'][0]['message']['content'].strip()
+            break  # Exit loop on success
+        except Exception as e:
+            print(f"Connection error on attempt {attempt + 1}/{retries}: {e}")
+            if attempt < retries - 1:
+                print(f"Retrying after {delay} seconds...")
+                time.sleep(delay)
+            else:
+                print("Failed after maximum retries. Exiting.")
+                return []
 
-    // Execute the query and return the results
-    return session.createQuery(cq).getResultList();
-}
+    # Process response
+    json_objects = response_content.split("###")
+    analysis_list = []
+    for obj in json_objects:
+        obj = obj.strip()
+        if obj:
+            try:
+                analysis = json.loads(obj)
+                analysis_list.append(analysis)
+            except json.JSONDecodeError as e:
+                print("JSON Decode Error:", e)
+
+    return analysis_list
+
+
+# Excel File Processing Function
+def process_excel_file(file_path):
+    """
+    Processes an Excel file, sends data in batches to OpenAI API, and saves the output.
+    """
+    # Read Excel file
+    df = pd.read_excel(file_path, header=None, names=['RawData'])
+    df = df[1:]  # Skip the first row if it's metadata or headers
+
+    # Batch processing
+    for i in range(0, len(df), 5):
+        batch_df = df.iloc[i:i + 5]
+        conversations = "\n\n".join(batch_df['RawData'])
+
+        # Get analysis
+        analysis_list = get_completion_from_messages(conversations)
+        print(f"Processed batch {i // 5 + 1}: Analysis received")
+
+        # Prepare results
+        batch_results = []
+        for j in range(len(batch_df)):
+            id_value = i + j + 1
+            analysis = analysis_list[j]
+            batch_results.append([id_value, analysis])
+
+        # Save results to CSV
+        batch_results_df = pd.DataFrame(batch_results, columns=['ID', 'Analysis'])
+        batch_results_df.to_csv('output/output_results.csv', mode='a', header=not bool(i), index=False)
+
+        print(f"Batch {i // 5 + 1}: results stored in output_results.csv")
+
+        # Pause to avoid hitting API limits
+        print("Pausing for 60 seconds before next API call...")
+        time.sleep(60)
+
+    print("Processing done. Results saved to output_results.csv")
+
+
+# Main Execution
+if __name__ == "__main__":
+    excel_file_path = 'data/input_transcripts.xlsx'
+    process_excel_file(excel_file_path)
