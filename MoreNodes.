@@ -1,18 +1,26 @@
+import os
 import json
 import time
 import pandas as pd
 from dotenv import load_dotenv, find_dotenv
 import openai
 
-# Load environment variables
-load_dotenv(find_dotenv())
 
-# OpenAI API Call Function
-def get_completion_from_messages(conversations, retries=10, delay=60):
+# Load environment variables and configure SSL certificate
+def initialize_environment():
     """
-    Sends a request to OpenAI API to analyze conversations and returns JSON responses.
+    Initializes environment variables and sets up SSL certificate.
     """
-    # System message template
+    load_dotenv(find_dotenv())
+    os.environ['SSL_CERT_FILE'] = '/users/eswar/certs/ert.pem'  # Set SSL certificate path
+    openai.api_key = os.getenv('OPENAI_API_KEY')                # Load OpenAI API key
+
+
+# Function to create API prompts
+def create_prompt(conversations):
+    """
+    Generates a prompt with system instructions and input data.
+    """
     system_message = """
     sentiment: Provide customer sentiment either Positive/Negative.
 
@@ -33,34 +41,43 @@ def get_completion_from_messages(conversations, retries=10, delay=60):
         "transcript": ""
     }
     """
+    return f'{system_message}\n{conversations}'
 
-    # Prompt creation
-    prompt = f'{system_message}\n{conversations}'
 
+# Function to call OpenAI API with retries
+def call_openai_api(prompt, retries=10, delay=60):
+    """
+    Makes a call to the OpenAI API with retry logic in case of failures.
+    """
     for attempt in range(retries):
         try:
-            # Make API call
-            print(f"Making call to OpenAI API...")
+            print(f"Attempt {attempt + 1}/{retries}: Making call to OpenAI API...")
             response = openai.Completion.create(
                 engine="ai-coe-gpt4-32k",
                 prompt=prompt,
                 max_tokens=31000
             )
-            # Extract response
-            response_content = response['choices'][0]['message']['content'].strip()
-            break  # Exit loop on success
+            return response['choices'][0]['message']['content'].strip()
         except Exception as e:
-            print(f"Connection error on attempt {attempt + 1}/{retries}: {e}")
+            print(f"Error: {e}")
             if attempt < retries - 1:
-                print(f"Retrying after {delay} seconds...")
+                print(f"Retrying in {delay} seconds...")
                 time.sleep(delay)
             else:
-                print("Failed after maximum retries. Exiting.")
-                return []
+                print("Max retries reached. Exiting.")
+                return None
 
-    # Process response
-    json_objects = response_content.split("###")
+
+# Function to process API response
+def parse_response(response_content):
+    """
+    Parses the API response content and converts it into JSON objects.
+    """
+    if not response_content:
+        return []
+
     analysis_list = []
+    json_objects = response_content.split("###")
     for obj in json_objects:
         obj = obj.strip()
         if obj:
@@ -69,49 +86,65 @@ def get_completion_from_messages(conversations, retries=10, delay=60):
                 analysis_list.append(analysis)
             except json.JSONDecodeError as e:
                 print("JSON Decode Error:", e)
-
     return analysis_list
 
 
-# Excel File Processing Function
-def process_excel_file(file_path):
+# Function to process an Excel file in batches
+def process_excel_file(file_path, batch_size=5):
     """
-    Processes an Excel file, sends data in batches to OpenAI API, and saves the output.
+    Processes an Excel file in batches, sends data to OpenAI API, and saves the results.
     """
-    # Read Excel file
+    # Read input data
     df = pd.read_excel(file_path, header=None, names=['RawData'])
-    df = df[1:]  # Skip the first row if it's metadata or headers
+    df = df[1:]  # Skip the first row if metadata or headers exist
 
-    # Batch processing
-    for i in range(0, len(df), 5):
-        batch_df = df.iloc[i:i + 5]
+    # Process in batches
+    for batch_start in range(0, len(df), batch_size):
+        batch_df = df.iloc[batch_start:batch_start + batch_size]
         conversations = "\n\n".join(batch_df['RawData'])
 
-        # Get analysis
-        analysis_list = get_completion_from_messages(conversations)
-        print(f"Processed batch {i // 5 + 1}: Analysis received")
+        # Generate prompt and call API
+        prompt = create_prompt(conversations)
+        response_content = call_openai_api(prompt)
 
-        # Prepare results
+        # Parse API response
+        analysis_list = parse_response(response_content)
+        print(f"Processed batch {batch_start // batch_size + 1}: Analysis received")
+
+        # Prepare batch results
         batch_results = []
-        for j in range(len(batch_df)):
-            id_value = i + j + 1
-            analysis = analysis_list[j]
+        for idx, analysis in enumerate(analysis_list):
+            id_value = batch_start + idx + 1
             batch_results.append([id_value, analysis])
 
-        # Save results to CSV
-        batch_results_df = pd.DataFrame(batch_results, columns=['ID', 'Analysis'])
-        batch_results_df.to_csv('output/output_results.csv', mode='a', header=not bool(i), index=False)
+        # Save batch results
+        save_results_to_csv(batch_results, batch_start == 0)
 
-        print(f"Batch {i // 5 + 1}: results stored in output_results.csv")
-
-        # Pause to avoid hitting API limits
+        # Pause before next batch
         print("Pausing for 60 seconds before next API call...")
         time.sleep(60)
 
-    print("Processing done. Results saved to output_results.csv")
+    print("Processing complete. Results saved to 'output/output_results.csv'")
 
 
-# Main Execution
+# Function to save results to CSV
+def save_results_to_csv(batch_results, is_first_batch):
+    """
+    Saves batch results to a CSV file in append mode.
+    """
+    output_file = 'output/output_results.csv'
+    batch_results_df = pd.DataFrame(batch_results, columns=['ID', 'Analysis'])
+    batch_results_df.to_csv(output_file, mode='a', header=is_first_batch, index=False)
+    print(f"Results stored in '{output_file}'")
+
+
+# Main function
 if __name__ == "__main__":
+    # Initialize environment and configuration
+    initialize_environment()
+
+    # File path for input data
     excel_file_path = 'data/input_transcripts.xlsx'
+
+    # Process Excel file
     process_excel_file(excel_file_path)
