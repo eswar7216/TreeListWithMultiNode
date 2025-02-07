@@ -1,1 +1,35 @@
 
+@startuml
+skinparam rectangle {
+  BorderColor Black
+  RoundCorner 10
+  Shadowing false
+}
+
+actor "User" as U
+
+rectangle "Chatbot UI\n(Web/Slack/etc.)" as UI
+rectangle "API Gateway / Orchestration\n(AWS Lambda / App)" as ORCH
+rectangle "Query Embedding Service\n(Generate Query Vector)" as QES
+rectangle "OpenSearch\n(Refined Data + Vector Embeddings)" as OS
+rectangle "Optional: Custom Model Preprocessing\n(Domain Enrichment)" as CMP
+rectangle "Prompt Construction\n(Combine Context + Query)" as PC
+rectangle "In-House AI Model\n(Accessible via AI Gateway)" as AI
+rectangle "Response Aggregation\n(Return Final Answer)" as RA
+
+U -> UI : Submits Query
+UI -> ORCH : Send Query
+ORCH -> QES : Generate Query Embedding
+QES -> ORCH : Return Query Vector
+ORCH -> OS : k-NN Search using Query Vector
+OS -> ORCH : Return Relevant Records
+ORCH -> CMP : (Optional) Enrich Context
+CMP -> ORCH : Return Enriched Data
+ORCH -> PC : Combine Query & Retrieved Context
+PC -> AI : Send Constructed Prompt
+AI -> PC : Return Generated Response
+PC -> ORCH : Pass Response
+ORCH -> RA : Aggregate & Format Response
+RA -> UI : Return Final Answer
+UI -> U : Display Answer
+@enduml
