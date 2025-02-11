@@ -1,1 +1,112 @@
 
+# Directory: src/main.py
+
+from fastapi import FastAPI
+from api.routes import router
+
+app = FastAPI()
+app.include_router(router)
+
+@app.get("/")
+def read_root():
+    return {"message": "Formulary Search AI is running!"}
+
+# Directory: src/api/routes.py
+
+from fastapi import APIRouter, HTTPException
+from models.query_model import QueryRequest
+from services.ai_gateway import process_query
+from services.opensearch import query_opensearch
+from services.local_data import query_local_json
+import os
+
+router = APIRouter()
+
+@router.post("/ask")
+async def ask_bot(request: QueryRequest):
+    user_query = request.query
+    ai_response = process_query(user_query)
+
+    if not ai_response or "formulary_nme" not in ai_response or "attribute" not in ai_response:
+        raise HTTPException(status_code=400, detail="AI Gateway failed to extract details.")
+
+    formulary_name = ai_response["formulary_nme"]
+    attribute = ai_response["attribute"]
+
+    if os.getenv("LOCAL_MODE", "False").lower() == "true":
+        result = query_local_json(formulary_name, attribute)
+    else:
+        result = query_opensearch(formulary_name, attribute)
+    
+    return result
+
+# Directory: src/models/query_model.py
+
+from pydantic import BaseModel
+
+class QueryRequest(BaseModel):
+    query: str
+
+# Directory: src/services/ai_gateway.py
+
+import requests
+import os
+
+AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL")
+
+def process_query(user_query):
+    response = requests.post(AI_GATEWAY_URL, json={"query": user_query})
+    return response.json() if response.status_code == 200 else None
+
+# Directory: src/services/opensearch.py
+
+from langchain_community.vectorstores import OpenSearchVectorSearch
+from langchain_community.embeddings import OpenAIEmbeddings
+import os
+
+OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST")
+OPENSEARCH_PORT = int(os.getenv("OPENSEARCH_PORT", 9200))
+OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX")
+
+retriever = OpenSearchVectorSearch(
+    index_name=OPENSEARCH_INDEX,
+    embedding_function=OpenAIEmbeddings(),
+    opensearch_url=f"http://{OPENSEARCH_HOST}:{OPENSEARCH_PORT}"
+)
+
+def query_opensearch(formulary_name, attribute):
+    results = retriever.similarity_search(formulary_name)
+    return {attribute: results[0].metadata.get(attribute, "Not found")} if results else {"message": "No data found"}
+
+# Directory: src/services/local_data.py
+
+import json
+import os
+
+LOCAL_JSON_FILE = "configs/local_data.json"
+
+def query_local_json(formulary_name, attribute):
+    try:
+        with open(LOCAL_JSON_FILE, "r") as f:
+            data = json.load(f)
+
+        for entry in data.get("formulary_data", []):
+            if entry.get("formulary_nme") == formulary_name:
+                return {attribute: entry.get(attribute, "Attribute not found")}
+
+        return {"message": "No data found in local JSON"}
+    except Exception as e:
+        return {"error": f"Failed to read local JSON: {str(e)}"}
+
+# Directory: requirements.txt
+
+fastapi==0.109.0
+uvicorn==0.27.0
+requests==2.31.0
+langchain==0.1.15
+langchain-community==0.0.27
+opensearch-py==2.3.1
+azure-ai-textanalytics==5.3.0
+azure-openai==1.0.0
+python-dotenv==1.0.1
+pytest==7.4.3
