@@ -1,4 +1,4 @@
-# Formulary Search AI - Complete Code with `tool_calls`
+# Formulary Search AI - Complete Code with `tool_calls` and Local Mode
 
 # ========================
 # Directory: src/main.py
@@ -22,6 +22,8 @@ from fastapi import APIRouter, HTTPException
 from models.query_model import QueryRequest
 from services.ai_gateway import process_query
 from services.opensearch import query_opensearch
+from services.local_data import query_local_json
+import os
 
 router = APIRouter()
 
@@ -32,7 +34,10 @@ def execute_tool_calls(tool_calls):
         if tool_call["tool"] == "query_formulary":
             formulary_name = tool_call["parameters"]["formulary_name"]
             attribute = tool_call["parameters"]["attribute"]
-            results.append(query_opensearch(formulary_name, attribute))
+            if os.getenv("LOCAL_MODE", "False").lower() == "true":
+                results.append(query_local_json(formulary_name, attribute))
+            else:
+                results.append(query_opensearch(formulary_name, attribute))
     return results
 
 @router.post("/ask")
@@ -47,91 +52,46 @@ async def ask_bot(request: QueryRequest):
     return {"response": ai_response}
 
 # ========================
-# Directory: src/models/query_model.py
+# Directory: src/services/local_data.py
 # ========================
 
-from pydantic import BaseModel
-
-class QueryRequest(BaseModel):
-    query: str
-
-# ========================
-# Directory: src/services/ai_gateway.py
-# ========================
-
+import json
 import os
-import yaml
-import requests
-from azure_openai import AzureChatOpenAI
 
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+LOCAL_JSON_FILE = "configs/local_data.json"
 
-# Load prompts from prompts.yaml
-with open("configs/prompts.yaml", "r") as file:
-    prompts = yaml.safe_load(file)
+def query_local_json(formulary_name, attribute):
+    """ Reads from local JSON file instead of OpenSearch in LOCAL_MODE. """
+    try:
+        with open(LOCAL_JSON_FILE, "r") as f:
+            data = json.load(f)
 
-azure_openai = AzureChatOpenAI(
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    azure_api_key=AZURE_OPENAI_API_KEY,
-    deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
-)
+        for entry in data.get("formulary_data", []):
+            if entry.get("formulary_nme") == formulary_name:
+                return {attribute: entry.get(attribute, "Attribute not found")}
 
-def process_query(user_query):
-    """ Calls Azure OpenAI and returns structured tool_calls if needed. """
-    messages = [
-        {"role": "system", "content": prompts["prompts"]["initial_prompt"]},
-        {"role": "user", "content": user_query}
-    ]
-
-    response = azure_openai.chat.completions.create(
-        model=AZURE_OPENAI_DEPLOYMENT_NAME,
-        messages=messages,
-        temperature=0.7
-    )
-
-    ai_response = response.choices[0].message["content"]
-
-    # If AI response contains `tool_calls`, return it as JSON
-    return ai_response if "tool_calls" in ai_response else {"response": ai_response}
+        return {"message": "No data found in local JSON"}
+    except Exception as e:
+        return {"error": f"Failed to read local JSON: {str(e)}"}
 
 # ========================
-# Directory: src/services/opensearch.py
+# Directory: configs/local_data.json
 # ========================
 
-from langchain_community.vectorstores import OpenSearchVectorSearch
-from langchain_community.embeddings import OpenAIEmbeddings
-import os
-import redis
-
-OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST")
-OPENSEARCH_PORT = int(os.getenv("OPENSEARCH_PORT", 9200))
-OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX")
-
-retriever = OpenSearchVectorSearch(
-    index_name=OPENSEARCH_INDEX,
-    embedding_function=OpenAIEmbeddings(),
-    opensearch_url=f"http://{OPENSEARCH_HOST}:{OPENSEARCH_PORT}"
-)
-
-redis_client = redis.Redis(host="localhost", port=6379, db=0)
-
-def query_opensearch(formulary_name, attribute):
-    """ Checks cache first, then queries OpenSearch if needed. """
-    cache_key = f"{formulary_name}_{attribute}"
-    cached_result = redis_client.get(cache_key)
-    
-    if cached_result:
-        return {"source": "cache", attribute: cached_result.decode("utf-8")}
-
-    results = retriever.similarity_search(formulary_name)
-    if results:
-        value = results[0].metadata.get(attribute, "Not found")
-        redis_client.set(cache_key, value, ex=3600)  # Cache for 1 hour
-        return {"source": "OpenSearch", attribute: value}
-
-    return {"message": "No data found"}
+{
+  "formulary_data": [
+    {
+      "formulary_nme": "Omnipod",
+      "total_wac": "400.0",
+      "placement": "Preferred"
+    },
+    {
+      "formulary_nme": "Humalog",
+      "total_wac": "250.0",
+      "placement": "Standard"
+    }
+  ]
+}
 
 # ========================
 # Directory: requirements.txt
@@ -149,31 +109,4 @@ python-dotenv==1.0.1
 redis==5.0.1
 pytest==7.4.3
 pyyaml==6.0.1
-
-# ========================
-# Directory: configs/prompts.yaml
-# ========================
-
-prompts:
-  initial_prompt: |
-    ### SYSTEM INSTRUCTIONS:
-    You are an AI assistant designed to retrieve formulary placement details.
-    Your goal is to fetch relevant data from OpenSearch when required.
-
-    ### RULES:
-    - If a query requires formulary data, return `tool_calls`.
-    - If it can be answered without data retrieval, respond normally.
-    - Do NOT fabricate responses.
-
-    ### RESPONSE EXAMPLES:
-    **User:** "What is the WAC amount for Omnipod?"
-    **AI Response:**
-    ```json
-    {
-      "tool_calls": [
-        {"tool": "query_formulary", "parameters": {"formulary_name": "Omnipod", "attribute": "total_wac"}}
-      ]
-    }
-    ```
-    **User:** "How do formularies work?"
-    **AI Response:** "Formularies determine which medications are covered under a plan."
+jsonschema==4.19.0
