@@ -87,19 +87,37 @@ logger = logging.getLogger(__name__)
 def query_local_json(formulary_name, attribute):
     """ Reads from local JSON file instead of OpenSearch in LOCAL_MODE. """
     try:
-        with open(LOCAL_JSON_FILE, "r") as f:
+        # Check if file exists before opening
+        if not os.path.exists(LOCAL_JSON_FILE):
+            logger.error(f"Local JSON file not found: {LOCAL_JSON_FILE}")
+            return {"error": f"Local JSON file not found: {LOCAL_JSON_FILE}"}
+
+        # Read and parse JSON file
+        with open(LOCAL_JSON_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        for entry in data.get("formulary_data", []):
+        # Ensure JSON contains the expected structure
+        if not isinstance(data, list):
+            logger.error(f"Invalid JSON structure: Expected a list of objects in {LOCAL_JSON_FILE}")
+            return {"error": "Invalid JSON structure in local data file"}
+
+        # Find the matching formulary entry
+        for entry in data:
             if entry.get("formulary_nme") == formulary_name:
                 logger.info(f"Local data found for {formulary_name}: {attribute}")
                 return {attribute: entry.get(attribute, "Attribute not found")}
 
-        logger.warning(f"No data found in local JSON for {formulary_name}.")
-        return {"message": "No data found in local JSON"}
+        logger.warning(f"No matching formulary found in local JSON for {formulary_name}")
+        return {"error": "No matching formulary found"}
+
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error: {str(e)} in file {LOCAL_JSON_FILE}")
+        return {"error": "Failed to parse JSON file"}
+
     except Exception as e:
-        logger.error(f"Failed to read local JSON: {str(e)}")
-        return {"error": f"Failed to read local JSON: {str(e)}"}
+        logger.error(f"Unexpected error reading JSON file: {str(e)}")
+        return {"error": f"Unexpected error reading JSON file: {str(e)}"}
+
 
 # ========================
 # Directory: requirements.txt
