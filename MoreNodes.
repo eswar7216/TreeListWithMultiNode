@@ -1,1 +1,174 @@
 
+# Formulary Search AI - Complete Code with `tool_calls`
+
+# ========================
+# Directory: src/main.py
+# ========================
+
+from fastapi import FastAPI
+from api.routes import router
+
+app = FastAPI()
+app.include_router(router)
+
+@app.get("/")
+def read_root():
+    return {"message": "Formulary Search AI is running!"}
+
+# ========================
+# Directory: src/api/routes.py
+# ========================
+
+from fastapi import APIRouter, HTTPException
+from models.query_model import QueryRequest
+from services.ai_gateway import process_query
+from services.opensearch import query_opensearch
+
+router = APIRouter()
+
+# Function to execute tool calls dynamically
+def execute_tool_calls(tool_calls):
+    results = []
+    for tool_call in tool_calls:
+        if tool_call["tool"] == "query_formulary":
+            formulary_name = tool_call["parameters"]["formulary_name"]
+            attribute = tool_call["parameters"]["attribute"]
+            results.append(query_opensearch(formulary_name, attribute))
+    return results
+
+@router.post("/ask")
+async def ask_bot(request: QueryRequest):
+    """ Processes AI response and executes `tool_calls` dynamically. """
+    user_query = request.query
+    ai_response = process_query(user_query)
+
+    if isinstance(ai_response, dict) and "tool_calls" in ai_response:
+        return {"results": execute_tool_calls(ai_response["tool_calls"])}
+
+    return {"response": ai_response}
+
+# ========================
+# Directory: src/models/query_model.py
+# ========================
+
+from pydantic import BaseModel
+
+class QueryRequest(BaseModel):
+    query: str
+
+# ========================
+# Directory: src/services/ai_gateway.py
+# ========================
+
+import os
+import requests
+from azure_openai import AzureChatOpenAI
+
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+
+azure_openai = AzureChatOpenAI(
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    azure_api_key=AZURE_OPENAI_API_KEY,
+    deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
+)
+
+def process_query(user_query):
+    """ Calls Azure OpenAI and returns structured tool_calls if needed. """
+    messages = [
+        {"role": "system", "content": "You are an AI that helps retrieve formulary details."},
+        {"role": "user", "content": user_query}
+    ]
+
+    response = azure_openai.chat.completions.create(
+        model=AZURE_OPENAI_DEPLOYMENT_NAME,
+        messages=messages,
+        temperature=0.7
+    )
+
+    ai_response = response.choices[0].message["content"]
+
+    # If AI response contains `tool_calls`, return it as JSON
+    return ai_response if "tool_calls" in ai_response else {"response": ai_response}
+
+# ========================
+# Directory: src/services/opensearch.py
+# ========================
+
+from langchain_community.vectorstores import OpenSearchVectorSearch
+from langchain_community.embeddings import OpenAIEmbeddings
+import os
+import redis
+
+OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST")
+OPENSEARCH_PORT = int(os.getenv("OPENSEARCH_PORT", 9200))
+OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX")
+
+retriever = OpenSearchVectorSearch(
+    index_name=OPENSEARCH_INDEX,
+    embedding_function=OpenAIEmbeddings(),
+    opensearch_url=f"http://{OPENSEARCH_HOST}:{OPENSEARCH_PORT}"
+)
+
+redis_client = redis.Redis(host="localhost", port=6379, db=0)
+
+def query_opensearch(formulary_name, attribute):
+    """ Checks cache first, then queries OpenSearch if needed. """
+    cache_key = f"{formulary_name}_{attribute}"
+    cached_result = redis_client.get(cache_key)
+    
+    if cached_result:
+        return {"source": "cache", attribute: cached_result.decode("utf-8")}
+
+    results = retriever.similarity_search(formulary_name)
+    if results:
+        value = results[0].metadata.get(attribute, "Not found")
+        redis_client.set(cache_key, value, ex=3600)  # Cache for 1 hour
+        return {"source": "OpenSearch", attribute: value}
+
+    return {"message": "No data found"}
+
+# ========================
+# Directory: requirements.txt
+# ========================
+
+fastapi==0.109.0
+uvicorn==0.27.0
+requests==2.31.0
+langchain==0.1.15
+langchain-community==0.0.27
+opensearch-py==2.3.1
+azure-ai-textanalytics==5.3.0
+azure-openai==1.0.0
+python-dotenv==1.0.1
+redis==5.0.1
+pytest==7.4.3
+
+# ========================
+# Directory: configs/prompts.yaml
+# ========================
+
+prompts:
+  initial_prompt: |
+    ### SYSTEM INSTRUCTIONS:
+    You are an AI assistant designed to retrieve formulary placement details.
+    Your goal is to fetch relevant data from OpenSearch when required.
+
+    ### RULES:
+    - If a query requires formulary data, return `tool_calls`.
+    - If it can be answered without data retrieval, respond normally.
+    - Do NOT fabricate responses.
+
+    ### RESPONSE EXAMPLES:
+    **User:** "What is the WAC amount for Omnipod?"
+    **AI Response:**
+    ```json
+    {
+      "tool_calls": [
+        {"tool": "query_formulary", "parameters": {"formulary_name": "Omnipod", "attribute": "total_wac"}}
+      ]
+    }
+    ```
+    **User:** "How do formularies work?"
+    **AI Response:** "Formularies determine which medications are covered under a plan."
