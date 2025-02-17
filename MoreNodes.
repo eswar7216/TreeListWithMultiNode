@@ -1,45 +1,92 @@
-prompts:
-  initial_prompt: |
-    You are an AI assistant that helps users retrieve formulary placement details, utilization management rules, and wholesale acquisition costs.
-    You must always return responses in structured JSON format with `tool_calls`.
+import React, { useState } from "react";
+import { Chat, Message, User } from "@progress/kendo-react-conversational-ui";
+import { Grid, GridColumn } from "@progress/kendo-react-grid";
+import { Button } from "@progress/kendo-react-buttons";
+import { AiOutlineMessage, AiOutlineClose } from "react-icons/ai"; // Chat and close icons
+import "./ChatBot.css"; // Include styles for floating icon
 
-    **Supported Queries:**
-    1. "What are the formularies available for {manufacturer_name}?"  
-       - Extract manufacturer name and return `mfr_nme`.
-    2. "What is the placement of {formulary_name} in {year}?"  
-       - Extract formulary name and year, return `grid_cell_type`.
-    3. "What are UM rules of {formulary_name} in {year}?"  
-       - Extract formulary name and year, return `um_rules`.
-    4. "What is the wholesale acquisition cost for {formulary_name} in {year}?"  
-       - Extract formulary name and year, return `total_wac`.
+interface ChatMessage {
+  author: User;
+  text: string;
+}
 
-    **Response Format:**
-    ```json
-    {
-      "tool_calls": [
-        {
-          "tool": "query_formulary",
-          "parameters": {
-            "formulary_name": "{formulary_name}",
-            "year": "{year}",
-            "attribute": "{attribute}"
-          }
-        }
-      ]
+const user: User = { id: 1, name: "User" };
+const bot: User = { id: 2, name: "Formulary AI Bot" };
+
+const ChatBot: React.FC = () => {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [results, setResults] = useState<any[]>([]);
+  const [isOpen, setIsOpen] = useState<boolean>(false);
+
+  const toggleChat = () => setIsOpen(!isOpen);
+
+  const sendMessage = async (event: any) => {
+    const userMessage: ChatMessage = { author: user, text: event.message.text };
+    setMessages((prev) => [...prev, userMessage]);
+
+    try {
+      const response = await fetch("http://localhost:8000/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: event.message.text }),
+      });
+
+      const data = await response.json();
+
+      if (data.results) {
+        setResults(data.results);
+        const botMessage: ChatMessage = { author: bot, text: "Here are your search results:" };
+        setMessages((prev) => [...prev, botMessage]);
+      } else if (data.response) {
+        const botMessage: ChatMessage = { author: bot, text: data.response };
+        setMessages((prev) => [...prev, botMessage]);
+      } else {
+        const botMessage: ChatMessage = { author: bot, text: "Sorry, I didn't understand your query." };
+        setMessages((prev) => [...prev, botMessage]);
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      const botMessage: ChatMessage = { author: bot, text: "An error occurred. Please try again later." };
+      setMessages((prev) => [...prev, botMessage]);
     }
-    ```
+  };
 
-    If the query involves a **manufacturer name**, return:
-    ```json
-    {
-      "tool_calls": [
-        {
-          "tool": "query_manufacturer",
-          "parameters": {
-            "manufacturer_name": "{manufacturer_name}",
-            "year": "{year}"
-          }
-        }
-      ]
-    }
-    
+  return (
+    <div>
+      {/* Floating Chat Icon */}
+      {!isOpen && (
+        <div className="chat-icon" onClick={toggleChat}>
+          <AiOutlineMessage size={32} />
+        </div>
+      )}
+
+      {/* Chat Container */}
+      {isOpen && (
+        <div className="chat-container">
+          <div className="chat-header">
+            <span>Formulary AI Bot</span>
+            <Button onClick={toggleChat} icon="close">
+              <AiOutlineClose size={20} />
+            </Button>
+          </div>
+
+          <Chat messages={messages} onMessageSend={sendMessage} user={user} placeholder="Ask about formulary..." />
+
+          {/* Display OpenSearch Results */}
+          {results.length > 0 && (
+            <div className="results-container">
+              <h4>Search Results</h4>
+              <Grid data={results}>
+                <GridColumn field="id" title="ID" width="100px" />
+                <GridColumn field="formulary_name" title="Formulary Name" width="200px" />
+                <GridColumn field="wac_amount" title="WAC Amount" width="150px" />
+              </Grid>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ChatBot;
