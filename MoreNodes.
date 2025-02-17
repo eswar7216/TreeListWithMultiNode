@@ -16,6 +16,7 @@ export const useStyles = makeStyles({
     cursor: "pointer",
     boxShadow: "0px 4px 6px rgba(0, 0, 0, 0.2)",
     transition: "all 0.3s ease-in-out",
+    zIndex: 1000,
     "&:hover": {
       background: "#005ea6",
     },
@@ -23,10 +24,10 @@ export const useStyles = makeStyles({
 
   chatContainer: {
     position: "fixed",
-    bottom: "80px", // Spacing from bottom
+    bottom: "80px",
     right: "20px",
     width: "350px",
-    maxHeight: "450px",
+    maxHeight: "500px",
     background: "white",
     borderRadius: "10px",
     boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.3)",
@@ -34,6 +35,7 @@ export const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     transition: "transform 0.3s ease-in-out",
+    zIndex: 1000,
   },
 
   chatHeader: {
@@ -56,7 +58,7 @@ export const useStyles = makeStyles({
 
   chatMessages: {
     flexGrow: 1,
-    maxHeight: "350px",
+    maxHeight: "400px",
     overflowY: "auto",
   },
 
@@ -74,3 +76,150 @@ export const useStyles = makeStyles({
     },
   },
 });
+
+
+
+---------
+import React, { useState } from "react";
+import { Chat, Message, User } from "@progress/kendo-react-conversational-ui";
+import { Grid, GridColumn } from "@progress/kendo-react-grid";
+import { Button } from "@progress/kendo-react-buttons";
+import { AiOutlineMessage, AiOutlineClose } from "react-icons/ai";
+import { useStyles } from "./chat.styles"; // Import styles
+
+interface ChatMessage {
+  author: User;
+  text: string;
+}
+
+const user: User = { id: 1, name: "User" };
+const bot: User = { id: 2, name: "Formulary AI Bot" };
+
+const ChatBot: React.FC = () => {
+  const classes = useStyles();
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [results, setResults] = useState<any[]>([]);
+  const [isOpen, setIsOpen] = useState<boolean>(false);
+
+  const toggleChat = () => setIsOpen(!isOpen);
+
+  const sendMessage = async (event: any) => {
+    const userMessage: ChatMessage = { author: user, text: event.message.text };
+    setMessages((prev) => [...prev, userMessage]);
+
+    try {
+      const response = await fetch("http://localhost:8000/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: event.message.text }),
+      });
+
+      const data = await response.json();
+
+      if (data.results) {
+        setResults(data.results);
+        const botMessage: ChatMessage = { author: bot, text: "Here are your search results:" };
+        setMessages((prev) => [...prev, botMessage]);
+      } else if (data.response) {
+        const botMessage: ChatMessage = { author: bot, text: data.response };
+        setMessages((prev) => [...prev, botMessage]);
+      } else {
+        const botMessage: ChatMessage = { author: bot, text: "Sorry, I didn't understand your query." };
+        setMessages((prev) => [...prev, botMessage]);
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      const botMessage: ChatMessage = { author: bot, text: "An error occurred. Please try again later." };
+      setMessages((prev) => [...prev, botMessage]);
+    }
+  };
+
+  return (
+    <div>
+      {/* Floating Chat Icon */}
+      {!isOpen && (
+        <div className={classes.chatIcon} onClick={toggleChat}>
+          <AiOutlineMessage size={32} />
+        </div>
+      )}
+
+      {/* Chat Container - Fixed Size on Bottom Right */}
+      {isOpen && (
+        <div className={classes.chatContainer}>
+          <div className={classes.chatHeader}>
+            <span>Formulary AI Bot</span>
+            <Button onClick={toggleChat} className={classes.closeButton}>
+              <AiOutlineClose size={20} />
+            </Button>
+          </div>
+
+          <Chat messages={messages} onMessageSend={sendMessage} user={user} placeholder="Ask about formulary..." />
+
+          {/* Display OpenSearch Results */}
+          {results.length > 0 && (
+            <div className={classes.resultsContainer}>
+              <h4>Search Results</h4>
+              <Grid data={results}>
+                <GridColumn field="id" title="ID" width="100px" />
+                <GridColumn field="formulary_name" title="Formulary Name" width="200px" />
+                <GridColumn field="wac_amount" title="WAC Amount" width="150px" />
+              </Grid>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ChatBot;
+
+
+
+
+----------
+import React from "react";
+import FormularyPlacementSearchSubHeader from "./FormularyPlacementSearchSubHeader";
+import FormularyPlacementSearchGrid from "./FormularyPlacementSearchGrid";
+import UtilizationManagement from "./UtilizationManagement";
+import ChatBot from "./ChatBot"; // Import chatbot
+import { LoadingSpinner } from "@progress/kendo-react-indicators";
+
+const FormularyPlacementSearch: React.FC = () => {
+  const isLoading = false; // Replace with actual loading state
+  const isFsPs = true; // Replace with actual condition
+  const selectedRow = true; // Replace with actual condition
+  const defaultProps = {}; // Replace with actual props
+
+  return (
+    <div className="d-flex flex-column gap-14 h-100">
+      {/* Header Section */}
+      <FormularyPlacementSearchSubHeader {...defaultProps} />
+
+      {/* Loading Spinner */}
+      {isLoading && (
+        <LoadingSpinner
+          size="large"
+          style={{
+            position: "absolute",
+            height: "100%",
+            width: "100%",
+            zIndex: 10000,
+            backgroundColor: "rgba(255,255,255,0.5)",
+          }}
+        />
+      )}
+
+      {/* Search Grid */}
+      <FormularyPlacementSearchGrid {...defaultProps} />
+
+      {/* Utilization Management Section */}
+      {selectedRow && <UtilizationManagement {...defaultProps} />}
+
+      {/* 🔥 ChatBot Integration - Now Renders Correctly */}
+      <ChatBot />
+    </div>
+  );
+};
+
+export default FormularyPlacementSearch;
