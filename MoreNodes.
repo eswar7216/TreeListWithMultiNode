@@ -1,49 +1,4 @@
-# Formulary Search AI - Full Implementation with Updated Prompts and Query Handling
-prompts:
-  initial_prompt: |
-    You are an AI assistant that helps users retrieve formulary placement details, utilization management rules, and wholesale acquisition costs. 
-    You must always return responses in structured JSON format with `tool_calls`.
-
-    **Supported Queries:**
-    1. "What are the formularies available for {manufacturer_name}?"  
-       - Extract manufacturer name and return `mfr_nme`.
-    2. "What is the placement of {formulary_name} in {year}?"  
-       - Extract formulary name and year, return `grid_cell_type`.
-    3. "What are UM rules of {formulary_name} in {year}?"  
-       - Extract formulary name and year, return `um_rules`.
-    4. "What is the wholesale acquisition cost for {formulary_name} in {year}?"  
-       - Extract formulary name and year, return `total_wac`.
-
-    **Response Format:**
-    ```json
-    {
-      "tool_calls": [
-        {
-          "tool": "query_formulary",
-          "parameters": {
-            "formulary_name": "{formulary_name}",
-            "year": "{year}",
-            "attribute": "{attribute}"
-          }
-        }
-      ]
-    }
-    ```
-
-    If the query involves a **manufacturer name**, return:
-    ```json
-    {
-      "tool_calls": [
-        {
-          "tool": "query_manufacturer",
-          "parameters": {
-            "manufacturer_name": "{manufacturer_name}",
-            "year": "{year}"
-          }
-        }
-      ]
-    }
-    ```
+# Formulary Search AI - Full Implementation with Updated Prompts, Query Handling, and Context Retention
 
 # ========================
 # Directory: src/main.py
@@ -87,9 +42,13 @@ from services.local_data import query_local_json
 import os
 import logging
 import json
+from collections import defaultdict
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# In-memory conversation history storage
+conversation_history = defaultdict(list)
 
 def execute_tool_calls(tool_calls):
     results = []
@@ -117,15 +76,24 @@ def execute_tool_calls(tool_calls):
 
 @router.post("/ask")
 async def ask_bot(request: QueryRequest):
-    logger.info(f"Received query: {request.query}")
+    conversation_id = request.conversation_id
     user_query = request.query
-    ai_response = process_query(user_query)
+    
+    logger.info(f"Received query for conversation {conversation_id}: {user_query}")
+    
+    # Retrieve conversation history
+    history = conversation_history[conversation_id]
+    history.append({"role": "user", "content": user_query})
+    
+    ai_response = process_query(user_query, history)
     logger.info(f"AI Gateway processed response: {ai_response}")
-
+    
+    history.append({"role": "assistant", "content": ai_response})
+    
     if isinstance(ai_response, dict) and "tool_calls" in ai_response:
         logger.info("AI returned tool_calls, executing queries.")
         return {"results": execute_tool_calls(ai_response["tool_calls"])}
-
+    
     logger.info("AI returned direct response.")
     return {"response": ai_response}
 
@@ -150,14 +118,12 @@ azure_openai = AzureChatOpenAI(
     deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
 )
 
-def process_query(user_query):
-    logger.info(f"Processing user query: {user_query}")
-
-    messages = [
-        {"role": "system", "content": "Use structured JSON responses with `tool_calls`"},
-        {"role": "user", "content": user_query}
-    ]
-
+def process_query(user_query, history):
+    logger.info(f"Processing user query: {user_query} with conversation history.")
+    
+    messages = [{"role": msg["role"], "content": msg["content"]} for msg in history]
+    messages.append({"role": "user", "content": user_query})
+    
     response = azure_openai.chat.completions.create(
         model=AZURE_OPENAI_DEPLOYMENT_NAME,
         messages=messages,
