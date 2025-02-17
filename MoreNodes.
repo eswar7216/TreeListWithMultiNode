@@ -1,92 +1,80 @@
-import React, { useState } from "react";
-import { Chat, Message, User } from "@progress/kendo-react-conversational-ui";
-import { Grid, GridColumn } from "@progress/kendo-react-grid";
-import { Button } from "@progress/kendo-react-buttons";
-import { AiOutlineMessage, AiOutlineClose } from "react-icons/ai"; // Chat and close icons
-import "./ChatBot.css"; // Include styles for floating icon
-
-interface ChatMessage {
-  author: User;
-  text: string;
+/* Floating Chat Icon */
+.chat-icon {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: #0078d4;
+  color: white;
+  width: 55px;
+  height: 55px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s ease-in-out;
 }
 
-const user: User = { id: 1, name: "User" };
-const bot: User = { id: 2, name: "Formulary AI Bot" };
+.chat-icon:hover {
+  background: #005ea6;
+}
 
-const ChatBot: React.FC = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [results, setResults] = useState<any[]>([]);
-  const [isOpen, setIsOpen] = useState<boolean>(false);
+/* Chat Container */
+.chat-container {
+  position: fixed;
+  bottom: 80px; /* Adjust for spacing from the bottom */
+  right: 20px;
+  width: 350px;
+  max-height: 450px;
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s ease-in-out;
+}
 
-  const toggleChat = () => setIsOpen(!isOpen);
+/* Chat Header */
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #0078d4;
+  color: white;
+  padding: 12px;
+  font-weight: bold;
+  font-size: 16px;
+}
 
-  const sendMessage = async (event: any) => {
-    const userMessage: ChatMessage = { author: user, text: event.message.text };
-    setMessages((prev) => [...prev, userMessage]);
+/* Close Button */
+.chat-header button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: white;
+}
 
-    try {
-      const response = await fetch("http://localhost:8000/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: event.message.text }),
-      });
+/* Chat Messages */
+.k-chat {
+  flex-grow: 1;
+  max-height: 350px;
+  overflow-y: auto;
+}
 
-      const data = await response.json();
+/* Search Results Grid */
+.results-container {
+  padding: 10px;
+  background: #f9f9f9;
+  border-top: 1px solid #ddd;
+}
 
-      if (data.results) {
-        setResults(data.results);
-        const botMessage: ChatMessage = { author: bot, text: "Here are your search results:" };
-        setMessages((prev) => [...prev, botMessage]);
-      } else if (data.response) {
-        const botMessage: ChatMessage = { author: bot, text: data.response };
-        setMessages((prev) => [...prev, botMessage]);
-      } else {
-        const botMessage: ChatMessage = { author: bot, text: "Sorry, I didn't understand your query." };
-        setMessages((prev) => [...prev, botMessage]);
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      const botMessage: ChatMessage = { author: bot, text: "An error occurred. Please try again later." };
-      setMessages((prev) => [...prev, botMessage]);
-    }
-  };
-
-  return (
-    <div>
-      {/* Floating Chat Icon */}
-      {!isOpen && (
-        <div className="chat-icon" onClick={toggleChat}>
-          <AiOutlineMessage size={32} />
-        </div>
-      )}
-
-      {/* Chat Container */}
-      {isOpen && (
-        <div className="chat-container">
-          <div className="chat-header">
-            <span>Formulary AI Bot</span>
-            <Button onClick={toggleChat} icon="close">
-              <AiOutlineClose size={20} />
-            </Button>
-          </div>
-
-          <Chat messages={messages} onMessageSend={sendMessage} user={user} placeholder="Ask about formulary..." />
-
-          {/* Display OpenSearch Results */}
-          {results.length > 0 && (
-            <div className="results-container">
-              <h4>Search Results</h4>
-              <Grid data={results}>
-                <GridColumn field="id" title="ID" width="100px" />
-                <GridColumn field="formulary_name" title="Formulary Name" width="200px" />
-                <GridColumn field="wac_amount" title="WAC Amount" width="150px" />
-              </Grid>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default ChatBot;
+/* Responsive - Adjust Chatbox on Smaller Screens */
+@media (max-width: 500px) {
+  .chat-container {
+    width: 90%;
+    right: 5%;
+    bottom: 60px;
+  }
+}
