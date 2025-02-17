@@ -1,178 +1,45 @@
-# Formulary Search AI - Full Implementation with Updated Prompts, Query Handling, and Context Retention
+prompts:
+  initial_prompt: |
+    You are an AI assistant that helps users retrieve formulary placement details, utilization management rules, and wholesale acquisition costs.
+    You must always return responses in structured JSON format with `tool_calls`.
 
-# ========================
-# Directory: src/main.py
-# ========================
+    **Supported Queries:**
+    1. "What are the formularies available for {manufacturer_name}?"  
+       - Extract manufacturer name and return `mfr_nme`.
+    2. "What is the placement of {formulary_name} in {year}?"  
+       - Extract formulary name and year, return `grid_cell_type`.
+    3. "What are UM rules of {formulary_name} in {year}?"  
+       - Extract formulary name and year, return `um_rules`.
+    4. "What is the wholesale acquisition cost for {formulary_name} in {year}?"  
+       - Extract formulary name and year, return `total_wac`.
 
-from fastapi import FastAPI, Request
-from api.routes import router
-import logging
-import time
+    **Response Format:**
+    ```json
+    {
+      "tool_calls": [
+        {
+          "tool": "query_formulary",
+          "parameters": {
+            "formulary_name": "{formulary_name}",
+            "year": "{year}",
+            "attribute": "{attribute}"
+          }
+        }
+      ]
+    }
+    ```
 
-# Configure Logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
-
-app = FastAPI()
-app.include_router(router)
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """ Middleware to log incoming requests and execution time. """
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    logger.info(f"{request.method} {request.url} - {response.status_code} - {process_time:.3f}s")
-    return response
-
-@app.get("/")
-def read_root():
-    logger.info("Root endpoint accessed.")
-    return {"message": "Formulary Search AI is running!"}
-
-# ========================
-# Directory: src/api/routes.py
-# ========================
-
-from fastapi import APIRouter, HTTPException
-from models.query_model import QueryRequest
-from services.ai_gateway import process_query
-from services.opensearch import query_opensearch
-from services.local_data import query_local_json
-import os
-import logging
-import json
-from collections import defaultdict
-
-router = APIRouter()
-logger = logging.getLogger(__name__)
-
-# In-memory conversation history storage
-conversation_history = defaultdict(list)
-
-def execute_tool_calls(tool_calls):
-    results = []
-    for tool_call in tool_calls:
-        tool = tool_call["tool"]
-        params = tool_call["parameters"]
-        formulary_name = params.get("formulary_name")
-        manufacturer_name = params.get("manufacturer_name")
-        attribute = params.get("attribute")
-        year = params.get("year")
-        
-        logger.info(f"Executing tool call: {tool_call}")
-        
-        if os.getenv("LOCAL_MODE", "False").lower() == "true":
-            if tool == "query_formulary":
-                results.append(query_local_json(formulary_name, attribute, year))
-            elif tool == "query_manufacturer":
-                results.append(query_local_json(manufacturer_name, "mfr_nme", year))
-        else:
-            if tool == "query_formulary":
-                results.append(query_opensearch(formulary_name, attribute, year))
-            elif tool == "query_manufacturer":
-                results.append(query_opensearch(manufacturer_name, "mfr_nme", year))
-    return results
-
-@router.post("/ask")
-async def ask_bot(request: QueryRequest):
-    conversation_id = request.conversation_id
-    user_query = request.query
+    If the query involves a **manufacturer name**, return:
+    ```json
+    {
+      "tool_calls": [
+        {
+          "tool": "query_manufacturer",
+          "parameters": {
+            "manufacturer_name": "{manufacturer_name}",
+            "year": "{year}"
+          }
+        }
+      ]
+    }
     
-    logger.info(f"Received query for conversation {conversation_id}: {user_query}")
-    
-    # Retrieve conversation history
-    history = conversation_history[conversation_id]
-    history.append({"role": "user", "content": user_query})
-    
-    ai_response = process_query(user_query, history)
-    logger.info(f"AI Gateway processed response: {ai_response}")
-    
-    history.append({"role": "assistant", "content": ai_response})
-    
-    if isinstance(ai_response, dict) and "tool_calls" in ai_response:
-        logger.info("AI returned tool_calls, executing queries.")
-        return {"results": execute_tool_calls(ai_response["tool_calls"])}
-    
-    logger.info("AI returned direct response.")
-    return {"response": ai_response}
-
-# ========================
-# Directory: src/services/ai_gateway.py
-# ========================
-
-import json
-import logging
-import os
-from azure_openai import AzureChatOpenAI
-
-logger = logging.getLogger(__name__)
-
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-
-azure_openai = AzureChatOpenAI(
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-    azure_api_key=AZURE_OPENAI_API_KEY,
-    deployment_name=AZURE_OPENAI_DEPLOYMENT_NAME,
-)
-
-def process_query(user_query, history):
-    logger.info(f"Processing user query: {user_query} with conversation history.")
-    
-    messages = [{"role": msg["role"], "content": msg["content"]} for msg in history]
-    messages.append({"role": "user", "content": user_query})
-    
-    response = azure_openai.chat.completions.create(
-        model=AZURE_OPENAI_DEPLOYMENT_NAME,
-        messages=messages,
-        temperature=0.7
-    )
-    
-    ai_response = response.choices[0].message.content.strip()
-    logger.info(f"Received AI response: {ai_response}")
-    
-    try:
-        parsed_response = json.loads(ai_response)
-        if "tool_calls" in parsed_response:
-            logger.info(f"Extracted tool_calls: {parsed_response['tool_calls']}")
-            return parsed_response
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse AI response as JSON: {str(e)} - AI Response: {ai_response}")
-    
-    return {"response": ai_response}
-
-# ========================
-# Directory: src/services/local_data.py
-# ========================
-
-import json
-import os
-import logging
-
-LOCAL_JSON_FILE = "configs/local_data.json"
-logger = logging.getLogger(__name__)
-
-def query_local_json(identifier, attribute, year):
-    try:
-        if not os.path.exists(LOCAL_JSON_FILE):
-            logger.error(f"Local JSON file not found: {LOCAL_JSON_FILE}")
-            return {"error": "Local JSON file not found"}
-
-        with open(LOCAL_JSON_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        for entry in data:
-            if "_source" in entry and (entry["_source"].get("formulary_nme") == identifier or entry["_source"].get("mfr_nme") == identifier) \
-                    and entry["_source"].get("invoice_yr") == str(year):
-                logger.info(f"Local data found for {identifier} in year {year}: {attribute}")
-                return {attribute: entry["_source"].get(attribute, "Attribute not found")}
-
-        return {"error": "No matching entry found"}
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {str(e)} in file {LOCAL_JSON_FILE}")
-        return {"error": "Failed to parse JSON file"}
-    except Exception as e:
-        logger.error(f"Unexpected error reading JSON file: {str(e)}")
-        return {"error": "Unexpected error reading JSON file"}
