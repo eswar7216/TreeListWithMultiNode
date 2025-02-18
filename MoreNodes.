@@ -1,4 +1,4 @@
-# Formulary Search AI - Updated to Query OpenSearch
+# Formulary Search AI - Updated to Query OpenSearch with Multiple Scenarios and Human-Readable Responses
 
 # ========================
 # Directory: src/main.py
@@ -66,10 +66,29 @@ async def ask_bot(conversation_id: str, request: QueryRequest):
     
     if isinstance(ai_response, dict) and "tool_calls" in ai_response:
         logger.info("AI returned tool_calls, executing queries.")
-        return {"results": query_opensearch(ai_response["tool_calls"])}
+        return {"response": format_human_readable(query_opensearch(ai_response["tool_calls"]))}
     
     logger.info("AI returned direct response.")
     return {"response": ai_response}
+
+
+def format_human_readable(results):
+    if not results or "error" in results[0]:
+        return "I'm sorry, I couldn't find the requested information."
+    
+    formatted_responses = []
+    for result in results:
+        for key, value in result.items():
+            if key == "grid_cell_type":
+                formatted_responses.append(f"The formulary placement is {value.lower()}.")
+            elif key == "um_rules":
+                formatted_responses.append(f"The utilization management rules are: {value}.")
+            elif key == "total_wac":
+                formatted_responses.append(f"The wholesale acquisition cost is ${value}.")
+            else:
+                formatted_responses.append(f"{key.replace('_', ' ').title()}: {value}")
+    
+    return " ".join(formatted_responses)
 
 # ========================
 # Directory: src/services/opensearch.py
@@ -91,13 +110,22 @@ def query_opensearch(tool_calls):
         year = params.get("year")
         attribute = params.get("attribute")
         
+        query_conditions = [{"match": {"_source.invoice_yr": str(year)}}]
+        
+        if formulary_name:
+            query_conditions.append({"match": {"_source.formulary_nme": formulary_name}})
+        
+        if attribute == "grid_cell_type":
+            query_conditions.append({"exists": {"field": "_source.grid_cell_type"}})
+        elif attribute == "um_rules":
+            query_conditions.append({"exists": {"field": "_source.um_rules"}})
+        elif attribute == "total_wac":
+            query_conditions.append({"exists": {"field": "_source.total_wac"}})
+        
         query = {
             "query": {
                 "bool": {
-                    "must": [
-                        {"match": {"_source.formulary_nme": formulary_name}},
-                        {"match": {"_source.invoice_yr": str(year)}}
-                    ]
+                    "must": query_conditions
                 }
             }
         }
