@@ -1,6 +1,19 @@
-from services.ai_gateway import format_response_with_llm  # Import LLM processing function
+# Formulary Search AI - Updated to Query OpenSearch with Multiple Scenarios and Human-Readable Responses
 
-def query_opensearch(tool_calls):
+# ========================
+# Directory: src/services/opensearch.py
+# ========================
+
+import requests
+import os
+import logging
+from services.ai_gateway import process_query, format_response_with_llm
+
+logger = logging.getLogger(__name__)
+
+OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://localhost:9200/fps_um/_search")
+
+def query_opensearch(tool_calls, conversation_history):
     results = []
     for tool_call in tool_calls:
         params = tool_call["parameters"]
@@ -11,7 +24,7 @@ def query_opensearch(tool_calls):
         attribute = params.get("attribute")
         
         query_conditions = []
-
+        
         if tool == "query_formulary_list_for_manufacturer":
             if manufacturer_name:
                 query_conditions.append({"match": {"_source.super_mfr_nme": manufacturer_name}})
@@ -55,28 +68,56 @@ def query_opensearch(tool_calls):
                     results.append({"error": "No matching record found. Please contact support at support@example.com for further assistance."})
             else:
                 results.append({"error": "Failed to fetch data from OpenSearch. Please reach out to support at support@example.com."})
-
-    # 🔹 Call LLM to format results if needed
-    formatted_results = format_response_with_llm(results)
+    
+    # 🔹 Call LLM to format results if needed, preserving conversation history
+    formatted_results = format_response_with_llm(results, conversation_history)
     return formatted_results
 
-
-
-
+# ========================
+# Directory: src/services/ai_gateway.py
+# ========================
 
 import json
 import logging
 
 logger = logging.getLogger(__name__)
 
-def format_response_with_llm(results):
+def ai_gateway_call(messages):
+    """ Simulates an AI Gateway call with conversation history """
+    logger.info(f"Sending request to AI Gateway: {json.dumps(messages)}")
+    return json.dumps({"response": "Formatted response from LLM."})
+
+def process_query(user_query, history):
+    logger.info(f"Processing user query: {user_query} with conversation history.")
+    
+    messages = [{"role": msg["role"], "content": msg["content"]} for msg in history]
+    messages.append({"role": "user", "content": user_query})
+    
+    ai_response = ai_gateway_call(messages)
+    
+    try:
+        parsed_response = json.loads(ai_response)
+        if "tool_calls" in parsed_response:
+            logger.info(f"Extracted tool_calls: {parsed_response['tool_calls']}")
+            return parsed_response
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse LLM response: {ai_response}")
+    
+    return {"response": ai_response}
+
+def format_response_with_llm(results, history):
     """
-    Calls the LLM to reformat the OpenSearch results into a user-friendly response.
+    Calls the LLM to reformat the OpenSearch results into a user-friendly response, preserving conversation history.
     """
     if not results or "error" in results[0]:
         return {"response": "I'm sorry, I couldn't find the requested information. Please contact support@example.com."}
     
-    llm_prompt = f"Reformat this data into a clear human-readable response: {json.dumps(results)}"
+    llm_prompt = {
+        "conversation_history": history,
+        "query_results": results,
+        "instruction": "Reformat this data into a clear human-readable response."
+    }
+    
     ai_response = ai_gateway_call(llm_prompt)  # Call AI Gateway for formatting
 
     try:
