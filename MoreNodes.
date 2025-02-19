@@ -1,5 +1,32 @@
 # Formulary Search AI - Updated to Query OpenSearch with Multiple Scenarios and Human-Readable Responses
 
+
+def process_query(user_query):
+    """ Calls Azure OpenAI and returns structured tool_calls if needed. """
+    messages = [
+        {"role": "system", "content": prompts["prompts"]["initial_prompt"]},
+         *[{"role:(msg["role"]), "content": str(msg["content"]),} for msg in history if history
+        {"role": "user", "content": user_query}
+    ]
+
+    response = azure_openai.chat.completions.create(
+        model=AZURE_OPENAI_DEPLOYMENT_NAME,
+        messages=messages,
+        temperature=0.7
+    )
+
+    ai_response = response.choices[0].message["content"]
+
+     try:
+        parsed_response = json.loads(ai_response)
+         if "tool_Calls" in parsed_response:
+               return parsed_response;
+    except json.JSONDecodeError:
+        log
+    return ai_response
+
+
+
 # ========================
 # Directory: src/services/opensearch.py
 # ========================
@@ -126,3 +153,38 @@ def format_response_with_llm(results, history):
     except json.JSONDecodeError:
         logger.error(f"Failed to parse LLM response: {ai_response}")
         return {"response": "Error formatting response. Here is the raw data:", "data": results}
+
+
+
+
+
+
+---better
+def format_response_with_llm(results, history):
+    """
+    Calls Azure OpenAI to reformat OpenSearch results into a user-friendly response, preserving conversation history.
+    """
+    if not results or "error" in results[0]:
+        return {"response": "I'm sorry, I couldn't find the requested information. Please contact support@example.com."}
+    
+    messages = [
+        {"role": "system", "content": "Reformat this data into a clear human-readable response."},
+        {"role": "assistant", "content": str(results)},
+    ] + [{"role": msg["role"], "content": str(msg["content"])} for msg in history]
+    
+    try:
+        response = azure_openai.chat.completions.create(
+            model=AZURE_OPENAI_DEPLOYMENT_NAME,
+            messages=messages,
+            temperature=0.7
+        )
+        
+        ai_response = response.choices[0].message.content
+        logger.info(f"Received formatted AI response: {ai_response}")
+        
+        parsed_response = json.loads(ai_response)
+        return parsed_response
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse LLM response: {ai_response}")
+        return {"response": "Error formatting response. Here is the raw data:", "data": results}
+
