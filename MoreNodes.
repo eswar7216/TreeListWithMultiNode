@@ -1,17 +1,4 @@
-
-# Formulary Search AI - Updated to Query OpenSearch with Multiple Scenarios and Human-Readable Responses
-
-# ========================
-# Directory: src/services/opensearch.py
-# ========================
-
-import requests
-import os
-import logging
-
-logger = logging.getLogger(__name__)
-
-OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://localhost:9200/fps_um/_search")
+from services.ai_gateway import format_response_with_llm  # Import LLM processing function
 
 def query_opensearch(tool_calls):
     results = []
@@ -24,29 +11,26 @@ def query_opensearch(tool_calls):
         attribute = params.get("attribute")
         
         query_conditions = []
-        
+
         if tool == "query_formulary_list_for_manufacturer":
             if manufacturer_name:
                 query_conditions.append({"match": {"_source.super_mfr_nme": manufacturer_name}})
             query = {
-                "size": 1000,  # Fetch up to 1000 records
+                "size": 1000,
                 "query": {
                     "bool": {
                         "must": query_conditions
                     }
                 }
             }
-            logger.info(f"Querying OpenSearch for manufacturer formularies: {query}")
             response = requests.post(OPENSEARCH_URL, json=query)
-            
             if response.status_code == 200:
                 data = response.json()
                 hits = data.get("hits", {}).get("hits", [])
                 unique_formularies = set(hit["_source"].get("formulary_nme") for hit in hits if "formulary_nme" in hit["_source"])
                 results.append({"formularies": list(unique_formularies)})
             else:
-                logger.error(f"Error querying OpenSearch: {response.text}")
-                results.append({"error": "Failed to fetch data from OpenSearch"})
+                results.append({"error": "Failed to fetch data from OpenSearch. Please reach out to support at support@example.com."})
         
         elif tool == "query_fps_placement":
             if formulary_name:
@@ -60,9 +44,7 @@ def query_opensearch(tool_calls):
                     }
                 }
             }
-            logger.info(f"Querying OpenSearch for formulary placement: {query}")
             response = requests.post(OPENSEARCH_URL, json=query)
-            
             if response.status_code == 200:
                 data = response.json()
                 hits = data.get("hits", {}).get("hits", [])
@@ -70,36 +52,36 @@ def query_opensearch(tool_calls):
                     result = hits[0]["_source"].get("grid_cell_type", "Placement not found")
                     results.append({"placement": result})
                 else:
-                    results.append({"error": "No matching record found"})
+                    results.append({"error": "No matching record found. Please contact support at support@example.com for further assistance."})
             else:
-                logger.error(f"Error querying OpenSearch: {response.text}")
-                results.append({"error": "Failed to fetch data from OpenSearch"})
-        
-        elif tool == "query_formulary_um_rules":
-            if formulary_name:
-                query_conditions.append({"match": {"_source.formulary_nme": formulary_name}})
-            if year:
-                query_conditions.append({"match": {"_source.invoice_yr": str(year)}})
-            query = {
-                "query": {
-                    "bool": {
-                        "must": query_conditions
-                    }
-                }
-            }
-            logger.info(f"Querying OpenSearch for UM rules: {query}")
-            response = requests.post(OPENSEARCH_URL, json=query)
-            
-            if response.status_code == 200:
-                data = response.json()
-                hits = data.get("hits", {}).get("hits", [])
-                if hits:
-                    result = hits[0]["_source"].get("um_rules", "UM rules not found")
-                    results.append({"um_rules": result})
-                else:
-                    results.append({"error": "No matching record found"})
-            else:
-                logger.error(f"Error querying OpenSearch: {response.text}")
-                results.append({"error": "Failed to fetch data from OpenSearch"})
+                results.append({"error": "Failed to fetch data from OpenSearch. Please reach out to support at support@example.com."})
+
+    # 🔹 Call LLM to format results if needed
+    formatted_results = format_response_with_llm(results)
+    return formatted_results
+
+
+
+
+
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+def format_response_with_llm(results):
+    """
+    Calls the LLM to reformat the OpenSearch results into a user-friendly response.
+    """
+    if not results or "error" in results[0]:
+        return {"response": "I'm sorry, I couldn't find the requested information. Please contact support@example.com."}
     
-    return results
+    llm_prompt = f"Reformat this data into a clear human-readable response: {json.dumps(results)}"
+    ai_response = ai_gateway_call(llm_prompt)  # Call AI Gateway for formatting
+
+    try:
+        parsed_response = json.loads(ai_response)
+        return parsed_response
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse LLM response: {ai_response}")
+        return {"response": "Error formatting response. Here is the raw data:", "data": results}
