@@ -1,21 +1,70 @@
-def format_response_with_llm(results, history):
+# API Gateway Integration for FastAPI Lambda
+
+# ========================
+# Directory: src/services/api_gateway.py
+# ========================
+
+import requests
+import os
+import logging
+import json
+from services.prompts import prompts  # Import prompts for system messages
+from services.azure_openai import azure_openai  # Import Azure OpenAI
+from services.opensearch import query_opensearch  # Import OpenSearch query function
+
+logger = logging.getLogger(__name__)
+
+API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "https://your-api-gateway-url.amazonaws.com/prod")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "your-model-name")
+
+def call_api_gateway(user_query, history):
+    """
+    Calls Azure OpenAI via API Gateway with the given user query and history, ensuring structured tool_calls.
+    """
+    messages = [
+        {"role": "system", "content": prompts["prompts"]["initial_prompt"]}
+    ] + [{"role": msg["role"], "content": str(msg["content"])} for msg in history] + \
+    [{"role": "user", "content": user_query}]
+    
+    try:
+        response = azure_openai.chat.completions.create(
+            model=AZURE_OPENAI_DEPLOYMENT_NAME,
+            messages=messages,
+            temperature=0.7
+        )
+        
+        ai_response = response.choices[0].message.content
+        logger.info(f"Received AI response: {ai_response}")
+        
+        return format_response_with_llm(ai_response, history)
+    except Exception as e:
+        logger.error(f"Failed to process user query: {str(e)}")
+        return {"error": "Failed to process AI query"}
+
+def format_response_with_llm(results, history, page=1, page_size=10):
     """
     Calls Azure OpenAI to reformat OpenSearch results into a user-friendly response, preserving conversation history.
-    Handles multiple queries dynamically, ensuring structured responses.
+    Handles multiple queries dynamically, ensuring structured responses for formulary placement searches.
     
-    - If response contains a large list, limit to 10 items and notify the user that more results are available.
+    - Extracts drug placement in a formulary for a given year.
+    - Supports pagination: User can request the next 10 results.
     - If results contain only one record, return a natural language response.
-    - Supports different types of queries without coupling the logic to a single query type.
+    - Ensures responses are structured in an intuitive manner.
     """
     if not results or "error" in results[0]:
         return {"response": "I'm sorry, I couldn't find the requested information. Please contact support@example.com."}
     
-    reformatted_results = results[:10] if isinstance(results, list) and len(results) > 10 else results
-    additional_message = "Showing top 10 results. More data available, refine your search." if isinstance(results, list) and len(results) > 10 else ""
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+    paginated_results = results[start_index:end_index]
+    
+    additional_message = "Showing {}-{} results. More data available, ask for the next set of results.".format(
+        start_index + 1, min(end_index, len(results))
+    ) if len(results) > end_index else ""
     
     messages = [
-        {"role": "system", "content": "Reformat this data into a clear human-readable response. If the list exceeds 10 items, inform the user that only the top 10 results are displayed and more data is available upon request. If the result contains only one record, return a natural language response without mentioning list truncation."},
-        {"role": "assistant", "content": str(reformatted_results)},
+        {"role": "system", "content": "Reformat this data into a clear human-readable response. Extract and emphasize drug placement in a formulary for the specified year. If pagination is in use, include details on which results are being shown and instruct users how to get the next set of results."},
+        {"role": "assistant", "content": str(paginated_results)},
     ] + [{"role": msg["role"], "content": str(msg["content"])} for msg in history]
     
     try:
@@ -34,4 +83,4 @@ def format_response_with_llm(results, history):
         return parsed_response
     except json.JSONDecodeError:
         logger.error(f"Failed to parse LLM response: {ai_response}")
-        return {"response": "Error formatting response. Here is the raw data:", "data": reformatted_results, "additional_info": additional_message}
+        return {"response": "Error formatting response. Here is the raw data:", "data": paginated_results, "additional_info": additional_message}
