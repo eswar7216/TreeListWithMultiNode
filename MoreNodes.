@@ -1,175 +1,33 @@
-# Formulary Search AI - Updated to Query OpenSearch with Multiple Scenarios and Human-Readable Responses
-
-
-def process_query(user_query):
-    """ Calls Azure OpenAI and returns structured tool_calls if needed. """
-    messages = [
-        {"role": "system", "content": prompts["prompts"]["initial_prompt"]},
-         *[{"role:(msg["role"]), "content": str(msg["content"]),} for msg in history if history
-        {"role": "user", "content": user_query}
-    ]
-
-    response = azure_openai.chat.completions.create(
-        model=AZURE_OPENAI_DEPLOYMENT_NAME,
-        messages=messages,
-        temperature=0.7
-    )
-
-    ai_response = response.choices[0].message["content"]
-
-     try:
-        parsed_response = json.loads(ai_response)
-         if "tool_Calls" in parsed_response:
-               return parsed_response;
-    except json.JSONDecodeError:
-        log
-    return ai_response
-
-
-
-# ========================
-# Directory: src/services/opensearch.py
-# ========================
-
-import requests
-import os
-import logging
-from services.ai_gateway import process_query, format_response_with_llm
-
-logger = logging.getLogger(__name__)
-
-OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://localhost:9200/fps_um/_search")
-
-def query_opensearch(tool_calls, conversation_history):
-    results = []
-    for tool_call in tool_calls:
-        params = tool_call["parameters"]
-        tool = tool_call["tool"]
-        manufacturer_name = params.get("manufacturer_name")
-        formulary_name = params.get("formulary_name")
-        year = params.get("year")
-        attribute = params.get("attribute")
-        
-        query_conditions = []
-        
-        if tool == "query_formulary_list_for_manufacturer":
-            if manufacturer_name:
-                query_conditions.append({"match": {"_source.super_mfr_nme": manufacturer_name}})
-            query = {
-                "size": 1000,
-                "query": {
-                    "bool": {
-                        "must": query_conditions
-                    }
-                }
-            }
-            response = requests.post(OPENSEARCH_URL, json=query)
-            if response.status_code == 200:
-                data = response.json()
-                hits = data.get("hits", {}).get("hits", [])
-                unique_formularies = set(hit["_source"].get("formulary_nme") for hit in hits if "formulary_nme" in hit["_source"])
-                results.append({"formularies": list(unique_formularies)})
-            else:
-                results.append({"error": "Failed to fetch data from OpenSearch. Please reach out to support at support@example.com."})
-        
-        elif tool == "query_fps_placement":
-            if formulary_name:
-                query_conditions.append({"match": {"_source.formulary_nme": formulary_name}})
-            if year:
-                query_conditions.append({"match": {"_source.invoice_yr": str(year)}})
-            query = {
-                "query": {
-                    "bool": {
-                        "must": query_conditions
-                    }
-                }
-            }
-            response = requests.post(OPENSEARCH_URL, json=query)
-            if response.status_code == 200:
-                data = response.json()
-                hits = data.get("hits", {}).get("hits", [])
-                if hits:
-                    result = hits[0]["_source"].get("grid_cell_type", "Placement not found")
-                    results.append({"placement": result})
-                else:
-                    results.append({"error": "No matching record found. Please contact support at support@example.com for further assistance."})
-            else:
-                results.append({"error": "Failed to fetch data from OpenSearch. Please reach out to support at support@example.com."})
-    
-    # 🔹 Call LLM to format results if needed, preserving conversation history
-    formatted_results = format_response_with_llm(results, conversation_history)
-    return formatted_results
-
-# ========================
-# Directory: src/services/ai_gateway.py
-# ========================
-
-import json
-import logging
-
-logger = logging.getLogger(__name__)
-
-def ai_gateway_call(messages):
-    """ Simulates an AI Gateway call with conversation history """
-    logger.info(f"Sending request to AI Gateway: {json.dumps(messages)}")
-    return json.dumps({"response": "Formatted response from LLM."})
-
-def process_query(user_query, history):
-    logger.info(f"Processing user query: {user_query} with conversation history.")
-    
-    messages = [{"role": msg["role"], "content": msg["content"]} for msg in history]
-    messages.append({"role": "user", "content": user_query})
-    
-    ai_response = ai_gateway_call(messages)
-    
-    try:
-        parsed_response = json.loads(ai_response)
-        if "tool_calls" in parsed_response:
-            logger.info(f"Extracted tool_calls: {parsed_response['tool_calls']}")
-            return parsed_response
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse LLM response: {ai_response}")
-    
-    return {"response": ai_response}
-
-def format_response_with_llm(results, history):
-    """
-    Calls the LLM to reformat the OpenSearch results into a user-friendly response, preserving conversation history.
-    """
-    if not results or "error" in results[0]:
-        return {"response": "I'm sorry, I couldn't find the requested information. Please contact support@example.com."}
-    
-    llm_prompt = {
-        "conversation_history": history,
-        "query_results": results,
-        "instruction": "Reformat this data into a clear human-readable response."
-    }
-    
-    ai_response = ai_gateway_call(llm_prompt)  # Call AI Gateway for formatting
-
-    try:
-        parsed_response = json.loads(ai_response)
-        return parsed_response
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse LLM response: {ai_response}")
-        return {"response": "Error formatting response. Here is the raw data:", "data": results}
-
-
-
-
-
-
----better
 def format_response_with_llm(results, history):
     """
     Calls Azure OpenAI to reformat OpenSearch results into a user-friendly response, preserving conversation history.
+    Handles multiple queries dynamically, ensuring structured responses.
+    
+    - If response contains a large list, limit to 10 items and notify the user that more results are available.
+    - If results contain only one record, return a natural language response.
+    - Supports different types of queries without coupling the logic to a single query type.
     """
     if not results or "error" in results[0]:
         return {"response": "I'm sorry, I couldn't find the requested information. Please contact support@example.com."}
     
+    reformatted_results = {}
+    additional_message = ""
+    
+    for key, value in results.items():
+        if isinstance(value, list):
+            if len(value) == 1:
+                return {"response": f"{key.capitalize()} result: {value[0]}"}  # Natural language for single result
+            elif len(value) > 10:
+                reformatted_results[key] = value[:10]
+                additional_message = "Showing top 10 results. More data available, refine your search."
+            else:
+                reformatted_results[key] = value
+        else:
+            reformatted_results[key] = value
+    
     messages = [
         {"role": "system", "content": "Reformat this data into a clear human-readable response."},
-        {"role": "assistant", "content": str(results)},
+        {"role": "assistant", "content": str(reformatted_results)},
     ] + [{"role": msg["role"], "content": str(msg["content"])} for msg in history]
     
     try:
@@ -183,8 +41,9 @@ def format_response_with_llm(results, history):
         logger.info(f"Received formatted AI response: {ai_response}")
         
         parsed_response = json.loads(ai_response)
+        if additional_message:
+            parsed_response["additional_info"] = additional_message
         return parsed_response
     except json.JSONDecodeError:
         logger.error(f"Failed to parse LLM response: {ai_response}")
-        return {"response": "Error formatting response. Here is the raw data:", "data": results}
-
+        return {"response": "Error formatting response. Here is the raw data:", "data": reformatted_results, "additional_info": additional_message}
