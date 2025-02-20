@@ -10,23 +10,11 @@ def format_response_with_llm(results, history):
     if not results or "error" in results[0]:
         return {"response": "I'm sorry, I couldn't find the requested information. Please contact support@example.com."}
     
-    reformatted_results = {}
-    additional_message = ""
-    
-    for key, value in results.items():
-        if isinstance(value, list):
-            if len(value) == 1:
-                return {"response": f"{key.capitalize()} result: {value[0]}"}  # Natural language for single result
-            elif len(value) > 10:
-                reformatted_results[key] = value[:10]
-                additional_message = "Showing top 10 results. More data available, refine your search."
-            else:
-                reformatted_results[key] = value
-        else:
-            reformatted_results[key] = value
+    reformatted_results = results[:10] if isinstance(results, list) and len(results) > 10 else results
+    additional_message = "Showing top 10 results. More data available, refine your search." if isinstance(results, list) and len(results) > 10 else ""
     
     messages = [
-        {"role": "system", "content": "Reformat this data into a clear human-readable response."},
+        {"role": "system", "content": "Reformat this data into a clear human-readable response. If the list exceeds 10 items, inform the user that only the top 10 results are displayed and more data is available upon request. If the result contains only one record, return a natural language response without mentioning list truncation."},
         {"role": "assistant", "content": str(reformatted_results)},
     ] + [{"role": msg["role"], "content": str(msg["content"])} for msg in history]
     
