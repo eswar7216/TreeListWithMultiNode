@@ -38,6 +38,74 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  
+  /query:
+    get:
+      summary: Retrieve all chats for a user
+      description: Fetches all chat history available for the user.
+      operationId: getAllChats
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Unique identifier of the user.
+      responses:
+        "200":
+          description: Successfully retrieved chat history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatHistoryResponse"
+        "400":
+          description: Invalid request format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  
+  /query:
+    delete:
+      summary: Clear all chat history
+      description: Deletes all chat history for the given user.
+      operationId: clearAllChats
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Unique identifier of the user.
+      responses:
+        "200":
+          description: Successfully cleared chat history.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    description: Confirmation message.
+        "400":
+          description: Invalid request format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -68,6 +136,32 @@ components:
         additional_info:
           type: string
           description: Pagination information if more results are available.
+
+    ChatHistoryResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+          description: Unique identifier of the user.
+        chats:
+          type: array
+          items:
+            type: object
+            properties:
+              conversationId:
+                type: string
+                description: Unique identifier of the conversation.
+              messages:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    role:
+                      type: string
+                      enum: [user, assistant]
+                    content:
+                      type: string
+                description: Messages exchanged in the chat.
 
     ErrorResponse:
       type: object
