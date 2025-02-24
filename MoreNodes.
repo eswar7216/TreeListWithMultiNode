@@ -4,6 +4,8 @@ import { Grid, GridColumn } from "@progress/kendo-react-grid";
 import { Button } from "@progress/kendo-react-buttons";
 import { Loader } from "@progress/kendo-react-indicators";
 import { AiOutlineMessage, AiOutlineClose } from "react-icons/ai";
+import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import { useStyles } from "./chat.styles";
 import type { MessageProps } from "@progress/kendo-react-conversational-ui";
 
@@ -17,9 +19,9 @@ const user: User = { id: 1, name: "User" };
 const bot: User = { id: 2, name: "Formulary AI Bot" };
 
 const initialMessages: ChatMessage[] = [
-  { author: bot, text: "Hello! I am your AI agent for formulary assistance. 🤖" },
-  { author: bot, text: "You can ask me about formulary details, WAC amounts, and placement." },
-  { author: bot, text: "How can I assist you today?" },
+  { author: bot, text: "**Hello!** I am your AI assistant. 🤖" },
+  { author: bot, text: "Ask me about formulary details, WAC amounts, and placement." },
+  { author: bot, text: "For example, you can ask:\n\n- *What is the WAC for Drug X?*\n- *Show me formulary placement for Y.*" },
 ];
 
 const ChatBot: React.FC = () => {
@@ -58,11 +60,11 @@ const ChatBot: React.FC = () => {
 
       if (data.results) {
         setResults(data.results);
-        setMessages((prev) => [...prev, { author: bot, text: "Here are your search results:" }]);
+        setMessages((prev) => [...prev, { author: bot, text: "**Here are your search results:**" }]);
       } else if (data.response) {
-        setMessages((prev) => [...prev, { author: bot, text: formatResponse(data.response) }]);
+        setMessages((prev) => [...prev, { author: bot, text: data.response }]);
       } else {
-        setMessages((prev) => [...prev, { author: bot, text: "Sorry, I didn't understand your query." }]);
+        setMessages((prev) => [...prev, { author: bot, text: "Sorry, I couldn't find that information." }]);
       }
     } catch (error) {
       setMessages((prev) => prev.filter((msg) => !msg.typingIndicator));
@@ -71,16 +73,7 @@ const ChatBot: React.FC = () => {
     }
   };
 
-  // Function to format response text
-  const formatResponse = (text: string): string => {
-    // If response contains a number, wrap it in <strong> for bold
-    text = text.replace(/(\d+)/g, "<strong>$1</strong>");
-
-    // Return the modified text
-    return text;
-  };
-
-  // Custom renderer to safely display HTML in chat
+  // Custom renderer for messages, using Markdown for formatting
   const customMessageRenderer = (props: MessageProps) => {
     const message = props.item as ChatMessage;
 
@@ -97,8 +90,9 @@ const ChatBot: React.FC = () => {
         className={`${classes.messageBubble} ${
           message.author.id === user.id ? classes.userMessage : classes.botMessage
         }`}
-        dangerouslySetInnerHTML={{ __html: message.text }} // Render formatted HTML safely
-      />
+      >
+        <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{message.text}</ReactMarkdown>
+      </div>
     );
   };
 
