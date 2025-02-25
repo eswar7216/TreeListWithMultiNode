@@ -108,4 +108,50 @@ const ChatBot: React.FC = () => {
           message.author.id === user.id ? classes.userMessage : classes.botMessage
         }`}
       >
-        {/* Render the formatted markdown usin
+        {/* Render the formatted markdown using ProseMirror */}
+        <div ref={(el) => {
+          if (el) {
+            new EditorView(el, {
+              state: EditorState.create({
+                doc: renderMarkdown(message.text),
+                schema,
+              }),
+              editable: false, // Make it read-only
+            });
+          }
+        }} />
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      {!isOpen && (
+        <div className={classes.chatIcon} onClick={toggleChat}>
+          <AiOutlineMessage size={32} />
+        </div>
+      )}
+
+      {isOpen && (
+        <div className={classes.chatContainer}>
+          <div className={classes.chatHeader}>
+            <span>Formulary AI Bot</span>
+            <Button onClick={toggleChat} className={classes.closeButton}>
+              <AiOutlineClose size={20} />
+            </Button>
+          </div>
+
+          <Chat
+            messages={messages}
+            onMessageSend={sendMessage}
+            user={user}
+            placeholder="Ask about formulary..."
+            messageTemplate={customMessageRenderer}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ChatBot;
