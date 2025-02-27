@@ -1,245 +1,274 @@
-To support the **two response scenarios**:
-1. **Follow-Up Questions** → Show follow-up question with selectable options.  
-2. **NLP Response (Message)** → Show bot response as a standard message.  
+To achieve this, we need to modify our approach so that when the bot **detects missing parameters**, it fetches **valid options from OpenSearch** before returning a `"follow_up"` response.
+
+### **🔹 Steps to Achieve This**
+1. **If the user query lacks a required parameter**, the LLM generates a `"follow_up"` response.
+2. **Before returning the `"follow_up"` question**, we query OpenSearch to get valid options.
+3. **The bot includes these options in the `"follow_up"` response** instead of hardcoding them.
 
 ---
 
-### **✅ Key Updates**
-1. **Parses `response_type` from API response.**  
-2. **Handles `follow_up` by displaying options as selectable buttons.**  
-3. **Handles `message` by displaying the text normally.**  
+# **✅ Updated `ai_gateway.py`**
+This modification ensures that the bot queries OpenSearch for valid options before returning a follow-up response.
 
----
+```python
+import os
+import json
+import logging
+from openai import AsyncAzureOpenAI
+from prompts import prompts
+from services.opensearch import query_valid_options
 
-## **📌 Updated `ChatBot.tsx`**
-```tsx
-import React, { useState } from "react";
-import { Chat, User, MessageAttachments, Message as KendoMessage } from "@progress/kendo-react-conversational-ui";
-import { Grid, GridColumn } from "@progress/kendo-react-grid";
-import { Button } from "@progress/kendo-react-buttons";
-import { Loader } from "@progress/kendo-react-indicators";
-import { AiOutlineMessage, AiOutlineClose } from "react-icons/ai";
-import { useStyles } from "./chat.styles";
-import type { MessageProps } from "@progress/kendo-react-conversational-ui";
+logger = logging.getLogger(__name__)
 
-interface ChatMessage {
-  author: User;
-  text: string;
-  responseType?: "message" | "follow_up";
-  followUpOptions?: string[];
-}
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 
-interface ApiResponse {
-  response_type: "message" | "follow_up";
-  message?: { text: string; context?: string };
-  follow_up?: { question: string; options: string[] };
-}
+azure_openai = AsyncAzureOpenAI(
+    api_key=AZURE_OPENAI_API_KEY,
+    api_version="2023-05-15",
+    azure_endpoint=AZURE_OPENAI_ENDPOINT
+)
 
-const user: User = { id: 1, name: "User", avatarUrl: "https://via.placeholder.com/40" };
-const bot: User = { id: 2, name: "Bot", avatarUrl: "" };
+async def process_query(user_query, history):
+    """
+    Calls Azure OpenAI to determine the next action:
+    - If missing parameters, queries OpenSearch for valid options.
+    - If an NLP response is needed, returns a structured message.
+    - If ready for OpenSearch, returns tool_calls.
+    """
+    messages = [
+        {"role": "system", "content": prompts["initial_prompt"]}
+    ] + history + [{"role": "user", "content": user_query}]
+    
+    try:
+        response = await azure_openai.chat.completions.create(
+            model="ai-coe-gpt4-8k-analyze",
+            messages=messages,
+            temperature=0.7
+        )
+        
+        ai_response = response.choices[0].message.content
+        logger.info(f"Raw LLM response: {ai_response}")
 
-const initialMessages: ChatMessage[] = [
-  { author: bot, text: "**Hello!** I am your AI assistant. 🤖" },
-  { author: bot, text: "Ask me about **formulary details**, WAC amounts, and placement." },
-];
+        # Convert LLM response to Python dict
+        parsed_response = json.loads(ai_response)
 
-const ChatBot: React.FC = () => {
-  const classes = useStyles();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isOpen, setIsOpen] = useState<boolean>(false);
-  const [isTyping, setIsTyping] = useState<boolean>(false);
+        # Validate response_type
+        if "response_type" not in parsed_response:
+            return {
+                "response_type": "message",
+                "message": {
+                    "text": "Invalid AI response format.",
+                    "context": "error"
+                }
+            }
 
-  const toggleChat = () => {
-    setIsOpen(!isOpen);
-    if (!isOpen && messages.length === 0) {
-      setMessages(initialMessages);
-    }
-  };
+        # Handle follow-up cases by fetching valid options from OpenSearch
+        if parsed_response["response_type"] == "follow_up":
+            follow_up_question = parsed_response["follow_up"]["question"]
 
-  const sendMessage = async (event: any) => {
-    const userMessage: ChatMessage = { author: user, text: event.message.text };
-    setMessages((prev) => [...prev, userMessage]);
+            # Determine what data needs to be fetched
+            if "formulary" in follow_up_question.lower():
+                options = await query_valid_options("formulary")
+            elif "year" in follow_up_question.lower():
+                options = await query_valid_options("year")
+            elif "drug" in follow_up_question.lower():
+                options = await query_valid_options("drug")
+            else:
+                options = []
 
-    setIsTyping(true);
-    setMessages((prev) => [...prev, { author: bot, text: "", responseType: "message" }]);
+            # Return follow-up with dynamically fetched options
+            return {
+                "response_type": "follow_up",
+                "follow_up": {
+                    "question": follow_up_question,
+                    "options": options
+                }
+            }
 
-    try {
-      const response = await fetch("http://localhost:8000/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: event.message.text }),
-      });
+        return parsed_response  # Returning Python dict (FastAPI auto-converts to JSON)
 
-      const data: ApiResponse = await response.json();
-      setIsTyping(false);
+    except json.JSONDecodeError:
+        logger.error("LLM response is not valid JSON.")
+        return {
+            "response_type": "message",
+            "message": {
+                "text": "The AI response could not be processed.",
+                "context": "error"
+            }
+        }
 
-      if (data.response_type === "follow_up" && data.follow_up) {
-        const followUpMessage: ChatMessage = {
-          author: bot,
-          text: data.follow_up.question,
-          responseType: "follow_up",
-          followUpOptions: data.follow_up.options,
-        };
-        setMessages((prev) => [...prev, followUpMessage]);
-      } else if (data.response_type === "message" && data.message) {
-        const botMessage: ChatMessage = { author: bot, text: data.message.text };
-        setMessages((prev) => [...prev, botMessage]);
-      } else {
-        setMessages((prev) => [...prev, { author: bot, text: "Sorry, I couldn't process that request." }]);
-      }
-    } catch (error) {
-      setIsTyping(false);
-      setMessages((prev) => [...prev, { author: bot, text: "An error occurred. Please try again later." }]);
-    }
-  };
-
-  const handleFollowUpSelection = (option: string) => {
-    sendMessage({ message: { text: option } });
-  };
-
-  // Custom renderer for messages
-  const customMessageRenderer = (props: MessageProps) => {
-    const message = props.item as ChatMessage;
-    const isUser = message.author.id === user.id;
-
-    return (
-      <div className={`${classes.messageWrapper} ${isUser ? classes.userMessageWrapper : classes.botMessageWrapper}`}>
-        {message.author.avatarUrl ? (
-          <img src={message.author.avatarUrl} alt={message.author.name} className={classes.avatar} />
-        ) : (
-          <div className={classes.avatar}>{message.author.name[0]}</div>
-        )}
-
-        <div className={classes.messageBubble}>
-          {message.text}
-          {message.responseType === "follow_up" && message.followUpOptions && (
-            <div className={classes.followUpOptions}>
-              {message.followUpOptions.map((option, index) => (
-                <button key={index} className={classes.followUpButton} onClick={() => handleFollowUpSelection(option)}>
-                  {option}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  return (
-    <div>
-      {!isOpen && (
-        <div className={classes.chatIcon} onClick={toggleChat}>
-          <AiOutlineMessage size={32} />
-        </div>
-      )}
-
-      {isOpen && (
-        <div className={classes.chatContainer}>
-          <div className={classes.chatHeader}>
-            <span>Formulary AI Bot</span>
-            <Button onClick={toggleChat} className={classes.closeButton}>
-              <AiOutlineClose size={20} />
-            </Button>
-          </div>
-
-          <Chat
-            messages={messages}
-            onMessageSend={sendMessage}
-            user={user}
-            placeholder="Ask about formulary..."
-            messageTemplate={customMessageRenderer}
-          />
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default ChatBot;
+    except Exception as e:
+        logger.error(f"Error processing query: {str(e)}")
+        return {
+            "response_type": "message",
+            "message": {
+                "text": "AI processing failed.",
+                "context": "error"
+            }
+        }
 ```
 
 ---
 
-## **📌 Update `chat.styles.ts` for Follow-Up Options**
-```tsx
-import { makeStyles } from "@mui/styles";
+# **✅ New Function in `opensearch.py`**
+This function **fetches valid options** from OpenSearch **before asking a follow-up question**.
 
-export const useStyles = makeStyles({
-  messageWrapper: {
-    display: "flex",
-    alignItems: "center",
-    marginBottom: "10px",
-  },
+```python
+import os
+import requests
+import logging
 
-  userMessageWrapper: {
-    flexDirection: "row-reverse",
-  },
+logger = logging.getLogger(__name__)
 
-  botMessageWrapper: {
-    flexDirection: "row",
-  },
+OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://localhost:9200/fps_um/_search")
 
-  avatar: {
-    width: "40px",
-    height: "40px",
-    borderRadius: "50%",
-    objectFit: "cover",
-    background: "#0078d4",
-    color: "white",
-    fontSize: "16px",
-    fontWeight: "bold",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: "10px",
-  },
+async def query_valid_options(option_type):
+    """
+    Fetches valid options (formulary names, years, or drugs) from OpenSearch.
+    """
+    query_conditions = []
 
-  messageBubble: {
-    padding: "10px 14px",
-    borderRadius: "18px",
-    fontSize: "15px",
-    maxWidth: "80%",
-    wordBreak: "break-word",
-    background: "#f3f3f3",
-    color: "#333",
-    boxShadow: "0px 2px 5px rgba(0, 0, 0, 0.1)",
-  },
+    if option_type == "formulary":
+        query = {
+            "size": 1000,
+            "_source": ["formulary_name"],
+            "query": {"match_all": {}}
+        }
+    elif option_type == "year":
+        query = {
+            "size": 1000,
+            "_source": ["invoice_yr"],
+            "query": {"match_all": {}}
+        }
+    elif option_type == "drug":
+        query = {
+            "size": 1000,
+            "_source": ["brand_name"],
+            "query": {"match_all": {}}
+        }
+    else:
+        return []
 
-  followUpOptions: {
-    marginTop: "8px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "5px",
-  },
-
-  followUpButton: {
-    background: "#0078d4",
-    color: "white",
-    padding: "6px 12px",
-    borderRadius: "12px",
-    border: "none",
-    cursor: "pointer",
-    fontSize: "14px",
-    "&:hover": {
-      background: "#005ea6",
-    },
-  },
-});
+    response = requests.post(OPENSEARCH_URL, json=query)
+    
+    if response.status_code == 200:
+        data = response.json()
+        hits = data.get("hits", {}).get("hits", [])
+        options = list(set(hit["_source"][option_type] for hit in hits if option_type in hit["_source"]))
+        return sorted(options)  # Returning sorted list of unique options
+    else:
+        return []
 ```
 
 ---
 
-## **🚀 Now Your Chatbot Supports**
-✅ **Follow-Up Questions with Clickable Options**  
-✅ **Standard Bot Messages**  
-✅ **Looks Clean & Professional**  
+# **✅ Updated `routes.py`**
+This ensures that if `"follow_up"` is returned, the bot **presents dynamic options**.
+
+```python
+from fastapi import APIRouter
+from services.ai_gateway import process_query, format_response_with_llm
+from services.opensearch import query_opensearch
+import logging
+
+router = APIRouter()
+conversation_history = {}
+
+@router.post("/chat/{conversation_id}")
+async def ask_bot(conversation_id: str, request: dict):
+    """Process user query, handle follow-ups, or run tool calls."""
+    
+    user_query = request.get("query", "")
+    logging.info(f"User query: {user_query}")
+
+    # Retrieve or init conversation history
+    if conversation_id not in conversation_history:
+        conversation_history[conversation_id] = []
+    history = conversation_history[conversation_id]
+
+    # Add user message to history
+    history.append({"role": "user", "content": user_query})
+
+    # Send to LLM
+    ai_response = await process_query(user_query, history)
+
+    # Add LLM response to history
+    history.append({"role": "assistant", "content": str(ai_response)})
+
+    # Handle response types
+    response_type = ai_response.get("response_type")
+
+    if response_type == "follow_up":
+        return {
+            "response_type": "follow_up",
+            "follow_up": ai_response["follow_up"]
+        }
+
+    if response_type == "message":
+        return {
+            "response_type": "message",
+            "message": ai_response["message"]
+        }
+
+    if response_type == "tool_calls":
+        results = await query_opensearch(ai_response["tool_calls"], history)
+        formatted_results = await format_response_with_llm(results, history)
+        return {
+            "response_type": "message",
+            "message": {
+                "text": formatted_results,
+                "context": "info"
+            }
+        }
+
+    return {
+        "response_type": "message",
+        "message": {
+            "text": "Unexpected response type.",
+            "context": "error"
+        }
+    }
+```
 
 ---
 
-### **🎯 Final Outcome**
-✔ **User asks:** "What are the drugs under Express Scripts?"  
-✔ **Bot Responds with Follow-Up:** "For which year do you need the drug list?" with options **2022, 2023, 2024**  
-✔ **User clicks 2023 → Chat continues!**  
+# **✅ Example Bot Behavior (Dynamic Follow-Ups)**
 
-🚀 **Your chatbot is now interactive and intelligent!** Let me know if you need more refinements. 😊🔥
+### **Case 1: Missing Year (Follow-Up with Valid Options)**
+👤 **User**: *"What are the drugs under Express Scripts?"*  
+🤖 **Bot Response (JSON)** (Fetched available years from OpenSearch)
+```json
+{
+  "response_type": "follow_up",
+  "follow_up": {
+    "question": "For which year do you need the drug list?",
+    "options": ["2021", "2022", "2023"]
+  }
+}
+```
+
+---
+
+### **Case 2: Missing Formulary (Follow-Up with Options)**
+👤 **User**: *"What is the placement of Lipitor?"*  
+🤖 **Bot Response (JSON)** (Fetched valid formularies from OpenSearch)
+```json
+{
+  "response_type": "follow_up",
+  "follow_up": {
+    "question": "Which formulary are you referring to?",
+    "options": ["Express Scripts", "BlueCross", "Aetna"]
+  }
+}
+```
+
+---
+
+### **🚀 Summary of Fixes**
+✔ **The bot now queries OpenSearch for valid options before asking follow-ups.**  
+✔ **The follow-up response contains real options, not hardcoded ones.**  
+✔ **Ensures consistency in structured responses.**  
+✔ **Dynamic interaction—bot intelligently asks for missing details without guessing.**  
+
+🚀 **Now your bot can fetch real options dynamically before asking follow-ups!** Let me know if you need refinements! 🎯
