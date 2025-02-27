@@ -1,76 +1,25 @@
-\Got it! You want a **structured response format** where the bot consistently returns one of these **response types**:
-
-1. **Follow-Up Request (`follow_up`)**  
-   - When required parameters (e.g., year, formulary_name) are missing.  
-   - Can include options (e.g., "You have multiple entries, which one do you prefer?").  
-   
-2. **Natural Language Response (`message`)**  
-   - When the response is **purely NLP** (e.g., "I don't know the answer").  
-
-3. **Tool Calls (`tool_calls`)**  
-   - When the bot has enough data and wants to **query OpenSearch**.
-
----
-
-# **1️⃣ New Structured Response Format**
-The LLM **must always return JSON** with **one of these fields**:
-
-```json
-{
-  "response_type": "follow_up",
-  "message": "Could you specify the formulary year?",
-  "options": ["2022", "2023", "2024"]  // Optional, only if multiple choices exist
-}
-```
-
-OR
-
-```json
-{
-  "response_type": "message",
-  "message": "I couldn't find that formulary. Please check the name."
-}
-```
-
-OR
-
-```json
-{
-  "response_type": "tool_calls",
-  "tool_calls": [
-    {
-      "tool": "query_drug_list_for_formulary",
-      "parameters": {
-        "formulary_name": "Express Scripts",
-        "year": 2023
-      }
-    }
-  ]
-}
-```
-
----
-
-# **2️⃣ Update `prompts.yaml`**
-This ensures **Azure OpenAI follows the structured format**.
-
-```yaml
 prompts:
   initial_prompt: |
     You are an AI assistant that helps users retrieve formulary details, drug placements, UM rules, and WAC.
-    **Your responses must always be in JSON format with a "response_type" key.**
-    
+
+    **Your responses must always follow one of these JSON formats:**
+
     - If the user’s question lacks necessary details (e.g., formulary_name, year, brand_name), return:
       {
         "response_type": "follow_up",
-        "message": "Could you specify the formulary year?",
-        "options": ["2022", "2023", "2024"]  // (Optional: only if multiple options exist)
+        "follow_up": {
+          "question": "Could you specify the formulary year?",
+          "options": ["2022", "2023", "2024"]
+        }
       }
 
-    - If the response does not require OpenSearch but needs to be a natural language reply:
+    - If the response does not require OpenSearch and is a **general message**:
       {
         "response_type": "message",
-        "message": "I couldn't find that formulary. Please check the name."
+        "message": {
+          "text": "I couldn't find that formulary. Please check the name.",
+          "context": "error"  // (Can be: "error", "info", "success")
+        }
       }
 
     - If the response requires querying OpenSearch:
@@ -87,188 +36,4 @@ prompts:
         ]
       }
 
-    **Always return one of these response types. Do not return raw text.**
-```
-
----
-
-# **3️⃣ Update `ai_gateway.py`**
-Now, **AI responses always match the structured format**.
-
-```python
-import os
-import json
-import logging
-from openai import AsyncAzureOpenAI
-from prompts import prompts
-
-logger = logging.getLogger(__name__)
-
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-
-azure_openai = AsyncAzureOpenAI(
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version="2023-05-15",
-    azure_endpoint=AZURE_OPENAI_ENDPOINT
-)
-
-async def process_query(user_query, history):
-    """
-    Calls Azure OpenAI to determine the next action:
-    - If missing parameters, returns a follow-up question.
-    - If natural language response is needed, returns a message.
-    - If ready for OpenSearch, returns tool_calls.
-    """
-    messages = [
-        {"role": "system", "content": prompts["initial_prompt"]}
-    ] + history + [{"role": "user", "content": user_query}]
-    
-    try:
-        response = await azure_openai.chat.completions.create(
-            model="ai-coe-gpt4-8k-analyze",
-            messages=messages,
-            temperature=0.7
-        )
-        
-        ai_response = response.choices[0].message.content
-        logger.info(f"Raw LLM response: {ai_response}")
-
-        try:
-            parsed_response = json.loads(ai_response)
-        except json.JSONDecodeError:
-            return {"response_type": "message", "message": "Sorry, I couldn't process your request."}
-
-        # Ensure response_type is present
-        if "response_type" not in parsed_response:
-            return {"response_type": "message", "message": "Invalid AI response format."}
-
-        return parsed_response
-
-    except Exception as e:
-        logger.error(f"Error processing query: {str(e)}")
-        return {"response_type": "message", "message": "AI processing failed."}
-```
-
----
-
-# **4️⃣ Update `routes.py`**
-Now the **bot correctly handles follow-ups, messages, and tool calls**.
-
-```python
-from fastapi import APIRouter
-from services.ai_gateway import process_query, format_response_with_llm
-from services.opensearch import query_opensearch
-import logging
-
-router = APIRouter()
-conversation_history = {}
-
-@router.post("/chat/{conversation_id}")
-async def ask_bot(conversation_id: str, request: dict):
-    """Process user query, handle follow-ups, or run tool calls."""
-    
-    user_query = request.get("query", "")
-    logging.info(f"User query: {user_query}")
-
-    # Retrieve or init conversation history
-    if conversation_id not in conversation_history:
-        conversation_history[conversation_id] = []
-    history = conversation_history[conversation_id]
-
-    # Add user message to history
-    history.append({"role": "user", "content": user_query})
-
-    # Send to LLM
-    ai_response = await process_query(user_query, history)
-
-    # Add LLM response to history
-    history.append({"role": "assistant", "content": str(ai_response)})
-
-    # Handle different response types
-    response_type = ai_response.get("response_type")
-
-    if response_type == "follow_up":
-        return {
-            "response_type": "follow_up",
-            "message": ai_response["message"],
-            "options": ai_response.get("options", [])  # Optional choices
-        }
-
-    if response_type == "message":
-        return {
-            "response_type": "message",
-            "message": ai_response["message"]
-        }
-
-    if response_type == "tool_calls":
-        results = await query_opensearch(ai_response["tool_calls"], history)
-        formatted_results = await format_response_with_llm(results, history)
-        return {
-            "response_type": "message",
-            "message": formatted_results
-        }
-
-    return {"response_type": "message", "message": "Unexpected response type."}
-```
-
----
-
-# **5️⃣ Example Conversations**
-
-### **Case 1: Follow-Up Question**
-👤 User:  
-*"What are the drugs under Express Scripts?"*  
-
-🤖 Bot (LLM Response):
-```json
-{
-  "response_type": "follow_up",
-  "message": "For which year do you need the drug list?"
-}
-```
----
-
-### **Case 2: Answer in Natural Language**
-👤 User:  
-*"What is the WAC for an unknown drug?"*  
-
-🤖 Bot:
-```json
-{
-  "response_type": "message",
-  "message": "I couldn't find that drug in the system."
-}
-```
----
-
-### **Case 3: Query OpenSearch**
-👤 User:  
-*"What are the drugs under Express Scripts for 2023?"*  
-
-🤖 Bot:
-```json
-{
-  "response_type": "tool_calls",
-  "tool_calls": [
-    {
-      "tool": "query_drug_list_for_formulary",
-      "parameters": {
-        "formulary_name": "Express Scripts",
-        "year": 2023
-      }
-    }
-  ]
-}
-```
-➡ **Bot queries OpenSearch and returns results.**
-
----
-
-# **✅ Key Benefits**
-✔ **Strict JSON response format** with `"response_type"`  
-✔ **LLM dynamically handles missing details (e.g., formulary, year)**  
-✔ **Bot easily distinguishes between follow-ups, natural language, and tool calls**  
-✔ **No hardcoded follow-up logic in Python (LLM handles it)**  
-
-This ensures **consistency, flexibility, and structured output**. 🚀 Let me know if you need tweaks!
+    **Strictly follow this JSON structure. Do NOT use single quotes. Do NOT return raw text outside JSON.**
