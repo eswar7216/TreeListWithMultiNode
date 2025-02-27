@@ -1,157 +1,184 @@
-import React, { useState } from "react";
-import { Chat, User } from "@progress/kendo-react-conversational-ui";
-import { Grid, GridColumn } from "@progress/kendo-react-grid";
-import { Button } from "@progress/kendo-react-buttons";
-import { Loader } from "@progress/kendo-react-indicators";
-import { AiOutlineMessage, AiOutlineClose } from "react-icons/ai";
-import { useStyles } from "./chat.styles";
-import type { MessageProps } from "@progress/kendo-react-conversational-ui";
+To fully support your requirements, the bot needs a structured approach to dynamically determine **which parameters to extract** from the user query and ensure **interactivity**. Here’s how we’ll enhance it:
 
-// ProseMirror imports
-import { DOMParser, Schema, Node } from "prosemirror-model";
-import { schema } from "prosemirror-schema-basic";
-import { markdownParser } from "prosemirror-markdown";
-import { EditorView } from "prosemirror-view";
-import { EditorState } from "prosemirror-state";
+---
 
-interface ChatMessage {
-  author: User;
-  text: string;
-  typingIndicator?: boolean;
-}
+### **Enhancements Required**
+1. **Dynamic Parameter Extraction:**  
+   - AI should infer the required parameters dynamically based on the user’s query.  
+   - We will refine the `prompts.yaml` to instruct the LLM on how to extract missing parameters.  
+   - If a parameter (like `formulary_name`, `brand_name`, or `year`) is missing, the bot should **ask follow-up questions**.
 
-interface CustomUser extends User {
-  firstName: string;
-}
+2. **Interactive Bot Behavior:**  
+   - If a query lacks key details, the bot should prompt the user interactively instead of failing.  
+   - Maintain conversation context to track previous queries and responses.  
+   - Ensure AI **remembers past interactions** when users provide additional details.
 
-// Mock user with first name
-const user: CustomUser = { id: 1, name: "User", firstName: "John" };
-const bot: User = { id: 2, name: "Formulary AI Bot" };
+---
 
-const initialMessages: ChatMessage[] = [
-  { author: bot, text: "**Hello!** I am your AI assistant. 🤖" },
-  { author: bot, text: "Ask me about **formulary details**, WAC amounts, and placement." },
-  { author: bot, text: "- *Example:* What is the WAC for Drug X?\n- How does formulary placement work?" },
-];
+## **Changes to Implement**
+### **1️⃣ Update `prompts.yaml` to Include Parameter Extraction Rules**
+Modify `prompts.yaml` to explicitly instruct the LLM to extract the required details dynamically.
 
-const ChatBot: React.FC = () => {
-  const classes = useStyles();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [results, setResults] = useState<any[]>([]);
-  const [isOpen, setIsOpen] = useState<boolean>(false);
-  const [isTyping, setIsTyping] = useState<boolean>(false);
+```yaml
+prompts:
+  initial_prompt: |
+    You are an AI assistant that helps users retrieve formulary details. 
+    You must:
+    - Identify if the user’s query requires fetching formulary, placement, UM rules, or WAC.
+    - Extract necessary details: formulary name, drug name (brand_name), and year if applicable.
+    - If a parameter is missing, ask the user follow-up questions interactively to clarify.
+    - Always return valid JSON format with required fields.
 
-  const toggleChat = () => {
-    setIsOpen(!isOpen);
-    if (!isOpen && messages.length === 0) {
-      setMessages(initialMessages);
-    }
-  };
+  interactive_prompt: |
+    You are a smart AI that interacts conversationally.
+    If the user query lacks a formulary name or drug name, ask:
+    - "Which formulary are you referring to?"
+    - "What drug do you need details for?"
+    If all details are present, proceed with execution.
+```
 
-  const sendMessage = async (event: any) => {
-    const userMessage: ChatMessage = {
-      author: user,
-      text: `**${user.firstName}:** ${event.message.text}`, // Display user first name
-    };
-    setMessages((prev) => [...prev, userMessage]);
+---
 
-    setIsTyping(true);
-    setMessages((prev) => [...prev, { author: bot, text: "", typingIndicator: true }]);
+### **2️⃣ Modify `ai_gateway.py` to Ask Follow-Up Questions**
+We update the AI processing function to **check for missing parameters** and prompt the user accordingly.
 
-    try {
-      const response = await fetch("http://localhost:8000/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: event.message.text }),
-      });
+```python
+async def process_query(user_query, history):
+    """Calls Azure OpenAI and extracts parameters dynamically."""
+    messages = [
+        {"role": "system", "content": prompts["initial_prompt"]}
+    ] + history + [{"role": "user", "content": user_query}]
+    
+    try:
+        response = await azure_openai.chat.completions.create(
+            model="ai-coe-gpt4-8k-analyze",
+            messages=messages,
+            temperature=0.7
+        )
+        
+        ai_response = response.choices[0].message.content
+        parsed_response = json.loads(ai_response)
 
-      const data = await response.json();
+        # If tool_calls exist, check for missing parameters
+        if "tool_calls" in parsed_response:
+            missing_params = []
 
-      setMessages((prev) => prev.filter((msg) => !msg.typingIndicator));
-      setIsTyping(false);
+            for tool_call in parsed_response["tool_calls"]:
+                params = tool_call["parameters"]
+                if not params.get("formulary_name"):
+                    missing_params.append("formulary_name")
+                if not params.get("brand_name") and "brand_name" in params:
+                    missing_params.append("brand_name")
+                if not params.get("year") and "year" in params:
+                    missing_params.append("year")
 
-      if (data.results) {
-        setResults(data.results);
-        setMessages((prev) => [...prev, { author: bot, text: "**Here are your search results:**" }]);
-      } else if (data.response) {
-        setMessages((prev) => [...prev, { author: bot, text: data.response }]);
-      } else {
-        setMessages((prev) => [...prev, { author: bot, text: "Sorry, I couldn't find that information." }]);
-      }
-    } catch (error) {
-      setMessages((prev) => prev.filter((msg) => !msg.typingIndicator));
-      setIsTyping(false);
-      setMessages((prev) => [...prev, { author: bot, text: "An error occurred. Please try again later." }]);
-    }
-  };
+            if missing_params:
+                # Ask user for the missing details interactively
+                follow_up_question = f"I need more information. Can you provide: {', '.join(missing_params)}?"
+                return {"follow_up": follow_up_question}
+            
+            return parsed_response
+        
+        return ai_response
+    except Exception as e:
+        logger.error(f"Error processing query: {str(e)}")
+        return {"error": "AI processing failed."}
+```
 
-  // Function to render markdown using ProseMirror
-  const renderMarkdown = (markdownText: string): Node => {
-    return markdownParser.parse(markdownText);
-  };
+---
 
-  // Custom renderer for messages using ProseMirror
-  const customMessageRenderer = (props: MessageProps) => {
-    const message = props.item as ChatMessage;
+### **3️⃣ Modify `routes.py` to Handle Follow-Up Conversations**
+If AI detects missing parameters, the bot should **ask the user** before making OpenSearch queries.
 
-    if (message.typingIndicator) {
-      return (
-        <div className={classes.typingLoader}>
-          <Loader size="small" type="pulsing" />
-        </div>
-      );
-    }
+```python
+@router.post("/chat/{conversation_id}")
+async def ask_bot(conversation_id: str, request: dict):
+    user_query = request.get("query")
+    logging.info(f"User query received: {user_query}")
 
-    return (
-      <div
-        className={`${classes.messageBubble} ${
-          message.author.id === user.id ? classes.userMessage : classes.botMessage
-        }`}
-      >
-        {/* Render the formatted markdown using ProseMirror */}
-        <div ref={(el) => {
-          if (el) {
-            new EditorView(el, {
-              state: EditorState.create({
-                doc: renderMarkdown(message.text),
-                schema,
-              }),
-              editable: false, // Make it read-only
-            });
-          }
-        }} />
-      </div>
-    );
-  };
+    history = conversation_history.get(conversation_id, [])
+    history.append({"role": "user", "content": user_query})
 
-  return (
-    <div>
-      {!isOpen && (
-        <div className={classes.chatIcon} onClick={toggleChat}>
-          <AiOutlineMessage size={32} />
-        </div>
-      )}
+    ai_response = await process_query(user_query, history)
 
-      {isOpen && (
-        <div className={classes.chatContainer}>
-          <div className={classes.chatHeader}>
-            <span>Formulary AI Bot</span>
-            <Button onClick={toggleChat} className={classes.closeButton}>
-              <AiOutlineClose size={20} />
-            </Button>
-          </div>
+    if isinstance(ai_response, dict):
+        if "follow_up" in ai_response:
+            return {"response": ai_response["follow_up"]}
 
-          <Chat
-            messages={messages}
-            onMessageSend={sendMessage}
-            user={user}
-            placeholder="Ask about formulary..."
-            messageTemplate={customMessageRenderer}
-          />
-        </div>
-      )}
-    </div>
-  );
-};
+        if "tool_calls" in ai_response:
+            results = await query_opensearch(ai_response["tool_calls"], history)
+            formatted_results = await format_response_with_llm(results, history)
+            return {"response": formatted_results}
 
-export default ChatBot;
+    return {"response": ai_response}
+```
+
+---
+
+### **4️⃣ Modify `opensearch.py` to Support All Query Types**
+This ensures **all five use cases** are properly handled.
+
+```python
+async def query_opensearch(tool_calls, conversation_history):
+    """Handles different query types for OpenSearch."""
+    
+    results = []
+    
+    for tool_call in tool_calls:
+        params = tool_call["parameters"]
+        tool = tool_call["tool"]
+        query_conditions = []
+
+        if tool == "query_formulary_list_for_manufacturer":
+            query_conditions.append({"match": {"super_mfr_name": params["attribute"]}})
+
+        elif tool == "query_drug_list_for_formulary":
+            query_conditions.append({"match": {"formulary_name": params["attribute"]}})
+
+        elif tool == "query_fps_placement":
+            query_conditions.append({"match_phrase": {"formulary_name.keyword": params["formulary_name"]}})
+            query_conditions.append({"match_phrase": {"brand_name.keyword": params["brand_name"].upper()}})
+            query_conditions.append({"match_phrase": {"invoice_yr.keyword": str(params["year"])}})
+
+        elif tool == "query_formulary_um_rules":
+            query_conditions.append({"match_phrase": {"formulary_name.keyword": params["formulary_name"]}})
+            query_conditions.append({"match_phrase": {"brand_name.keyword": params["brand_name"].upper()}})
+            query_conditions.append({"match_phrase": {"invoice_yr.keyword": str(params["year"])}})
+
+        elif tool == "query_total_wac":
+            query_conditions.append({"match_phrase": {"formulary_name.keyword": params["formulary_name"]}})
+            query_conditions.append({"match_phrase": {"brand_name.keyword": params["brand_name"].upper()}})
+            query_conditions.append({"match_phrase": {"invoice_yr.keyword": str(params["year"])}})
+
+        query = {"size": 1000, "query": {"bool": {"must": query_conditions}}}
+        
+        response = requests.post(OPENSEARCH_URL, json=query)
+        if response.status_code == 200:
+            data = response.json()
+            hits = data.get("hits", {}).get("hits", [])
+            results.append([hit["_source"] for hit in hits])
+        else:
+            results.append({"error": "Failed to fetch data from OpenSearch."})
+    
+    return results
+```
+
+---
+
+## **✅ Final Behavior of the Bot**
+| User Query | Bot Response |
+|------------|-------------|
+| "What are the drugs under formulary?" | "Which formulary are you referring to?" (if missing) OR **List of drugs** |
+| "What is the placement of the drug in given formulary?" | "Which formulary are you referring to?" (if missing) OR **Placement details** |
+| "What are UM rules of the drug in given formulary?" | "Which drug and formulary?" (if missing) OR **UM rules** |
+| "What is WAC for given drug under formulary?" | "Which formulary and drug?" (if missing) OR **WAC value** |
+
+---
+
+## **🚀 Summary**
+✅ AI **extracts** missing parameters dynamically  
+✅ AI **asks follow-up questions** when required  
+✅ AI **remembers conversation history**  
+✅ AI **formats OpenSearch results** using LLM  
+
+With these changes, your bot will be **fully interactive and intelligent** in handling all the cases you described! 🎯 Let me know if you need any refinements. 🚀
