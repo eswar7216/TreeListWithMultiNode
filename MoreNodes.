@@ -1,39 +1,72 @@
-prompts:
-  initial_prompt: |
-    You are an AI assistant that helps users retrieve formulary details, drug placements, UM rules, and WAC.
+import os
+import json
+import logging
+from openai import AsyncAzureOpenAI
+from prompts import prompts
 
-    **Your responses must always follow one of these JSON formats:**
+logger = logging.getLogger(__name__)
 
-    - If the user’s question lacks necessary details (e.g., formulary_name, year, brand_name), return:
-      {
-        "response_type": "follow_up",
-        "follow_up": {
-          "question": "Could you specify the formulary year?",
-          "options": ["2022", "2023", "2024"]
-        }
-      }
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 
-    - If the response does not require OpenSearch and is a **general message**:
-      {
-        "response_type": "message",
-        "message": {
-          "text": "I couldn't find that formulary. Please check the name.",
-          "context": "error"  // (Can be: "error", "info", "success")
-        }
-      }
+azure_openai = AsyncAzureOpenAI(
+    api_key=AZURE_OPENAI_API_KEY,
+    api_version="2023-05-15",
+    azure_endpoint=AZURE_OPENAI_ENDPOINT
+)
 
-    - If the response requires querying OpenSearch:
-      {
-        "response_type": "tool_calls",
-        "tool_calls": [
-          {
-            "tool": "query_drug_list_for_formulary",
-            "parameters": {
-              "formulary_name": "Express Scripts",
-              "year": 2023
+async def process_query(user_query, history):
+    """
+    Calls Azure OpenAI to determine the next action:
+    - If missing parameters, returns a structured follow-up question.
+    - If an NLP response is needed, returns a structured message.
+    - If ready for OpenSearch, returns tool_calls.
+    """
+    messages = [
+        {"role": "system", "content": prompts["initial_prompt"]}
+    ] + history + [{"role": "user", "content": user_query}]
+    
+    try:
+        response = await azure_openai.chat.completions.create(
+            model="ai-coe-gpt4-8k-analyze",
+            messages=messages,
+            temperature=0.7
+        )
+        
+        ai_response = response.choices[0].message.content
+        logger.info(f"Raw LLM response: {ai_response}")
+
+        # Convert LLM response to Python dict
+        parsed_response = json.loads(ai_response)
+
+        # Validate response_type
+        if "response_type" not in parsed_response:
+            return {
+                "response_type": "message",
+                "message": {
+                    "text": "Invalid AI response format.",
+                    "context": "error"
+                }
             }
-          }
-        ]
-      }
 
-    **Strictly follow this JSON structure. Do NOT use single quotes. Do NOT return raw text outside JSON.**
+        return parsed_response  # Returning Python dict (FastAPI auto-converts to JSON)
+
+    except json.JSONDecodeError:
+        logger.error("LLM response is not valid JSON.")
+        return {
+            "response_type": "message",
+            "message": {
+                "text": "The AI response could not be processed.",
+                "context": "error"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error processing query: {str(e)}")
+        return {
+            "response_type": "message",
+            "message": {
+                "text": "AI processing failed.",
+                "context": "error"
+            }
+        }
