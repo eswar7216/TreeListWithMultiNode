@@ -1,72 +1,62 @@
-import os
-import json
+from fastapi import APIRouter
+from services.ai_gateway import process_query, format_response_with_llm
+from services.opensearch import query_opensearch
 import logging
-from openai import AsyncAzureOpenAI
-from prompts import prompts
 
-logger = logging.getLogger(__name__)
+router = APIRouter()
+conversation_history = {}
 
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-
-azure_openai = AsyncAzureOpenAI(
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version="2023-05-15",
-    azure_endpoint=AZURE_OPENAI_ENDPOINT
-)
-
-async def process_query(user_query, history):
-    """
-    Calls Azure OpenAI to determine the next action:
-    - If missing parameters, returns a structured follow-up question.
-    - If an NLP response is needed, returns a structured message.
-    - If ready for OpenSearch, returns tool_calls.
-    """
-    messages = [
-        {"role": "system", "content": prompts["initial_prompt"]}
-    ] + history + [{"role": "user", "content": user_query}]
+@router.post("/chat/{conversation_id}")
+async def ask_bot(conversation_id: str, request: dict):
+    """Process user query, handle follow-ups, or run tool calls."""
     
-    try:
-        response = await azure_openai.chat.completions.create(
-            model="ai-coe-gpt4-8k-analyze",
-            messages=messages,
-            temperature=0.7
-        )
-        
-        ai_response = response.choices[0].message.content
-        logger.info(f"Raw LLM response: {ai_response}")
+    user_query = request.get("query", "")
+    logging.info(f"User query: {user_query}")
 
-        # Convert LLM response to Python dict
-        parsed_response = json.loads(ai_response)
+    # Retrieve or init conversation history
+    if conversation_id not in conversation_history:
+        conversation_history[conversation_id] = []
+    history = conversation_history[conversation_id]
 
-        # Validate response_type
-        if "response_type" not in parsed_response:
-            return {
-                "response_type": "message",
-                "message": {
-                    "text": "Invalid AI response format.",
-                    "context": "error"
-                }
-            }
+    # Add user message to history
+    history.append({"role": "user", "content": user_query})
 
-        return parsed_response  # Returning Python dict (FastAPI auto-converts to JSON)
+    # Send to LLM
+    ai_response = await process_query(user_query, history)
 
-    except json.JSONDecodeError:
-        logger.error("LLM response is not valid JSON.")
+    # Add LLM response to history
+    history.append({"role": "assistant", "content": str(ai_response)})
+
+    # Handle response types
+    response_type = ai_response.get("response_type")
+
+    if response_type == "follow_up":
+        return {
+            "response_type": "follow_up",
+            "follow_up": ai_response["follow_up"]
+        }
+
+    if response_type == "message":
+        return {
+            "response_type": "message",
+            "message": ai_response["message"]
+        }
+
+    if response_type == "tool_calls":
+        results = await query_opensearch(ai_response["tool_calls"], history)
+        formatted_results = await format_response_with_llm(results, history)
         return {
             "response_type": "message",
             "message": {
-                "text": "The AI response could not be processed.",
-                "context": "error"
+                "text": formatted_results,
+                "context": "info"
             }
         }
 
-    except Exception as e:
-        logger.error(f"Error processing query: {str(e)}")
-        return {
-            "response_type": "message",
-            "message": {
-                "text": "AI processing failed.",
-                "context": "error"
-            }
+    return {
+        "response_type": "message",
+        "message": {
+            "text": "Unexpected response type.",
+            "context": "error"
         }
+    }
