@@ -1,102 +1,105 @@
-You're absolutely right! We first need to **determine the user's intent (context)** before deciding whether to:
-1. **Perform an OpenSearch lookup** (for `"did_you_mean"` or `"follow_up"`).
-2. **Return a direct NLP response** if it's not a formulary-related question.
-3. **Execute a tool call** if all parameters are available.
+Got it! You want the bot to **properly handle all NLP (non-formulary) questions**, not just greetings, while still maintaining structured responses. Here’s how we’ll fix it:
 
 ---
 
 ## **🔹 Updated Approach**
-### **Step 1: Determine User Intent**
-- **Use LLM to categorize the query**:
-  - Is it an **NLP message** (e.g., "How does formulary work?")?
-  - Is it a **formulary-related search** (e.g., "What is the WAC for Lipitor?")?
+1. **Determine user intent (context) first using LLM**:
+   - **Is it an NLP question?** (General question, greeting, explanation request)
+   - **Is it a formulary-related search?** (Structured question needing OpenSearch)
+   - **Is it unclear?** (Ask for clarification)
 
-### **Step 2: If It’s a Formulary Question, Perform OpenSearch Check**
-- If an **exact match exists**, proceed with the query.
-- If **no exact match**, check for similar matches and return `"did_you_mean"`.
+2. **Handle NLP Questions Before Doing Anything Else**:
+   - If the user **asks about formularies generally**, return an **informative response**.
+   - If the user **greets the bot**, return a **friendly response**.
+   - If the user **asks a completely unrelated question**, return a **helpful response**.
 
-### **Step 3: If Data is Missing, Ask for Follow-Up**
-- If **a required parameter is missing** (e.g., **year is missing**), return a `"follow_up"` response.
+3. **For formulary-related questions, proceed with OpenSearch logic**.
+
+---
+
+## **✅ Updated `prompts.yaml`**
+Now, the LLM will **correctly classify all NLP questions**.
+
+```yaml
+prompts:
+  context_prompt: |
+    You are an AI assistant that determines the intent of a user query.
+    
+    **Your response must be in JSON format and include a "context" key.**
+    
+    - If the user is greeting (e.g., "Hello", "Hi", "Hey"), respond:
+      {
+        "context": "greeting"
+      }
+
+    - If the user is asking a general NLP question (e.g., "How does formulary placement work?", "What is WAC?", "Tell me about Express Scripts"), respond:
+      {
+        "context": "nlp",
+        "message": "Formulary placement determines where a drug is listed in an insurance plan. Would you like to ask about a specific formulary?"
+      }
+
+    - If the user is asking about a formulary search (e.g., "What is the WAC for Lipitor?"), respond:
+      {
+        "context": "formulary_search",
+        "entity": "<extracted entity>",
+        "tool": "query_total_wac",
+        "parameters": {
+          "formulary_name": "<extracted formulary>",
+          "year": "<extracted year>",
+          "brand_name": "<extracted brand>"
+        },
+        "missing_parameters": ["year"]  // If missing details
+      }
+
+    - If the query is unclear, respond:
+      {
+        "context": "unknown",
+        "message": "I'm not sure I understood your request. Can you clarify?"
+      }
+
+    **Always return JSON. Never return plain text.**
+```
 
 ---
 
 ## **✅ Updated `ai_gateway.py`**
-This update **first derives the context** before performing OpenSearch operations.
+Now, the bot **first determines if it's an NLP question** before doing anything else.
 
 ```python
-import os
-import json
-import logging
-from openai import AsyncAzureOpenAI
-from prompts import prompts
-from services.opensearch import query_valid_options, query_did_you_mean
-
-logger = logging.getLogger(__name__)
-
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-
-azure_openai = AsyncAzureOpenAI(
-    api_key=AZURE_OPENAI_API_KEY,
-    api_version="2023-05-15",
-    azure_endpoint=AZURE_OPENAI_ENDPOINT
-)
-
-async def derive_context(user_query, history):
-    """
-    Uses LLM to determine if the query is:
-    1. NLP (general knowledge)
-    2. A formulary-related search
-    """
-    messages = [
-        {"role": "system", "content": prompts["context_prompt"]}
-    ] + history + [{"role": "user", "content": user_query}]
-    
-    try:
-        response = await azure_openai.chat.completions.create(
-            model="ai-coe-gpt4-8k-analyze",
-            messages=messages,
-            temperature=0.7
-        )
-
-        ai_response = response.choices[0].message.content
-        logger.info(f"Derived Context: {ai_response}")
-
-        parsed_response = json.loads(ai_response)
-
-        if "context" not in parsed_response:
-            return {"context": "unknown"}
-
-        return parsed_response
-
-    except json.JSONDecodeError:
-        return {"context": "unknown"}
-
-    except Exception as e:
-        logger.error(f"Context derivation failed: {str(e)}")
-        return {"context": "unknown"}
-
 async def process_query(user_query, history):
     """
     Determines the context of the query before deciding whether to:
     - Process an NLP question
     - Query OpenSearch for exact/fuzzy matches
     - Perform a follow-up if necessary
+    - Handle greetings properly
     """
     
     # Step 1: Determine query intent
     context_result = await derive_context(user_query, history)
     context = context_result.get("context")
 
+    # Handle Greetings
+    if context == "greeting":
+        return {
+            "response_type": "message",
+            "message": {
+                "text": "Hello! How can I assist you today?",
+                "context": "greeting"
+            }
+        }
+
+    # Handle General NLP Queries
     if context == "nlp":
         return {
             "response_type": "message",
             "message": {
-                "text": "I'm happy to answer general formulary questions!",
+                "text": context_result["message"],
                 "context": "info"
             }
         }
 
+    # Handle Formulary Search Queries
     if context == "formulary_search":
         entity = context_result.get("entity", "")
 
@@ -139,6 +142,17 @@ async def process_query(user_query, history):
             ]
         }
 
+    # Handle Unknown Queries
+    if context == "unknown":
+        return {
+            "response_type": "message",
+            "message": {
+                "text": context_result["message"],
+                "context": "error"
+            }
+        }
+
+    # Default error handling
     return {
         "response_type": "message",
         "message": {
@@ -150,47 +164,25 @@ async def process_query(user_query, history):
 
 ---
 
-## **✅ Updated `prompts.yaml`**
-We **add a new `context_prompt`** so the LLM can classify queries.
+## **✅ Example Scenarios**
 
-```yaml
-prompts:
-  context_prompt: |
-    You are an AI assistant that determines the intent of a user query.
-    
-    **Your response must be in JSON format and include a "context" key.**
-    
-    - If the user is asking a general NLP question (not related to OpenSearch), respond:
-      {
-        "context": "nlp"
-      }
-
-    - If the user is asking about a formulary (e.g., "What is the WAC for Lipitor?"), respond:
-      {
-        "context": "formulary_search",
-        "entity": "<extracted entity>",
-        "tool": "query_total_wac",
-        "parameters": {
-          "formulary_name": "<extracted formulary>",
-          "year": "<extracted year>",
-          "brand_name": "<extracted brand>"
-        },
-        "missing_parameters": ["year"]  // If missing details
-      }
-
-    - If the query is unclear, respond:
-      {
-        "context": "unknown"
-      }
-
-    **Always return JSON. Never return plain text.**
+### **✅ Scenario 1: Greeting**
+👤 **User**: *"Hello!"*  
+🔍 **LLM detects it's a greeting**  
+🤖 **Bot Response (JSON)**:
+```json
+{
+  "response_type": "message",
+  "message": {
+    "text": "Hello! How can I assist you today?",
+    "context": "greeting"
+  }
+}
 ```
 
 ---
 
-## **3️⃣ Example Scenarios**
-
-### **✅ Scenario 1: NLP Question**
+### **✅ Scenario 2: NLP Question (General Knowledge)**
 👤 **User**: *"How does formulary placement work?"*  
 🔍 **LLM determines it's an NLP query**  
 🤖 **Bot Response (JSON)**:
@@ -198,7 +190,7 @@ prompts:
 {
   "response_type": "message",
   "message": {
-    "text": "I'm happy to answer general formulary questions!",
+    "text": "Formulary placement determines where a drug is listed in an insurance plan. Would you like to ask about a specific formulary?",
     "context": "info"
   }
 }
@@ -206,7 +198,23 @@ prompts:
 
 ---
 
-### **✅ Scenario 2: Did You Mean?**
+### **✅ Scenario 3: NLP Question (Specific Formulary)**
+👤 **User**: *"Tell me about Express Scripts."*  
+🔍 **LLM determines it's an NLP query**  
+🤖 **Bot Response (JSON)**:
+```json
+{
+  "response_type": "message",
+  "message": {
+    "text": "Express Scripts is a pharmacy benefit manager that administers drug benefit programs. Would you like to search for a specific drug?",
+    "context": "info"
+  }
+}
+```
+
+---
+
+### **✅ Scenario 4: Did You Mean?**
 👤 **User**: *"What are the drugs under Expres Scipts?"*  
 🔍 **LLM detects it's a formulary search**  
 🔍 **OpenSearch finds no exact match, but fuzzy search suggests options**  
@@ -223,7 +231,7 @@ prompts:
 
 ---
 
-### **✅ Scenario 3: Follow-Up**
+### **✅ Scenario 5: Follow-Up**
 👤 **User**: *"What is the WAC for Lipitor?"*  
 🔍 **LLM detects a formulary search**  
 🔍 **OpenSearch confirms a match, but year is missing**  
@@ -240,7 +248,7 @@ prompts:
 
 ---
 
-### **✅ Scenario 4: Full Query**
+### **✅ Scenario 6: Full Query**
 👤 **User**: *"What is the WAC for Lipitor under Express Scripts in 2023?"*  
 🔍 **LLM confirms all required parameters**  
 🔍 **OpenSearch finds an exact match**  
@@ -264,9 +272,9 @@ prompts:
 ---
 
 ### **🚀 Summary of Fixes**
-✔ **First derives the query context before using OpenSearch.**  
-✔ **If no match is found, suggests closest matches (`did_you_mean`).**  
-✔ **If a required parameter is missing, asks for it (`follow_up`).**  
-✔ **Only calls OpenSearch when all parameters are present.**  
+✔ **Now properly handles all NLP questions, not just greetings**  
+✔ **Prevents the bot from returning "unknown" for general questions**  
+✔ **Maintains structured JSON responses**  
+✔ **More interactive and intelligent responses**  
 
-🚀 **Now your bot is context-aware, fully interactive, and handles vague queries properly!** Let me know if you need more refinements! 🎯
+🚀 **Now your bot is fully intelligent and interactive!** Let me know if you need further refinements! 🎯
