@@ -1,14 +1,81 @@
-To achieve this, we need to modify our approach so that when the bot **detects missing parameters**, it fetches **valid options from OpenSearch** before returning a `"follow_up"` response.
+### **🔹 Adding "Did You Mean?" Feature**
+You want the bot to:
+1. **Query OpenSearch when user input has no exact match**.
+2. **Return "Did You Mean?" suggestions** with close matches.
+3. **Let the user select a correct option instead of failing immediately**.
 
-### **🔹 Steps to Achieve This**
-1. **If the user query lacks a required parameter**, the LLM generates a `"follow_up"` response.
-2. **Before returning the `"follow_up"` question**, we query OpenSearch to get valid options.
-3. **The bot includes these options in the `"follow_up"` response** instead of hardcoding them.
+This is **similar to `"follow_up"`** but will be a **new response type** called `"did_you_mean"`.
 
 ---
 
-# **✅ Updated `ai_gateway.py`**
-This modification ensures that the bot queries OpenSearch for valid options before returning a follow-up response.
+## **✅ Updated JSON Response Format**
+Now the bot can return one of these **structured responses**:
+
+1️⃣ **Follow-up (`follow_up`)** → When **required parameters are missing**, e.g., missing year or formulary name.  
+2️⃣ **Did You Mean? (`did_you_mean`)** → When **user input is slightly wrong** and we can suggest corrections.  
+3️⃣ **Message (`message`)** → When **no OpenSearch query is needed** (e.g., general error).  
+4️⃣ **Tool Calls (`tool_calls`)** → When the bot **has all details to query OpenSearch**.
+
+---
+
+## **1️⃣ Updated `prompts.yaml`**
+We **tell the LLM** how to return `"did_you_mean"` responses.
+
+```yaml
+prompts:
+  initial_prompt: |
+    You are an AI assistant that helps users retrieve formulary details, drug placements, UM rules, and WAC.
+
+    **Your responses must always follow one of these JSON formats:**
+
+    - If a user’s question lacks necessary details (e.g., formulary_name, year, brand_name), return:
+      {
+        "response_type": "follow_up",
+        "follow_up": {
+          "question": "Could you specify the formulary year?",
+          "options": ["2022", "2023", "2024"]
+        }
+      }
+
+    - If the user input is slightly incorrect and close matches exist in OpenSearch, return:
+      {
+        "response_type": "did_you_mean",
+        "did_you_mean": {
+          "question": "Did you mean one of these?",
+          "options": ["Express Scripts", "BlueCross", "Aetna"]
+        }
+      }
+
+    - If no OpenSearch query is needed (error, general message, etc.):
+      {
+        "response_type": "message",
+        "message": {
+          "text": "I couldn't find that formulary. Please check the name.",
+          "context": "error"
+        }
+      }
+
+    - If the response requires querying OpenSearch:
+      {
+        "response_type": "tool_calls",
+        "tool_calls": [
+          {
+            "tool": "query_drug_list_for_formulary",
+            "parameters": {
+              "formulary_name": "Express Scripts",
+              "year": 2023
+            }
+          }
+        ]
+      }
+
+    **Strictly follow this JSON structure. Do NOT use single quotes. Do NOT return raw text outside JSON.**
+```
+
+---
+
+## **2️⃣ Updated `ai_gateway.py`**
+We modify the `process_query` function to handle **both** `"follow_up"` and `"did_you_mean"`.
 
 ```python
 import os
@@ -16,7 +83,7 @@ import json
 import logging
 from openai import AsyncAzureOpenAI
 from prompts import prompts
-from services.opensearch import query_valid_options
+from services.opensearch import query_valid_options, query_did_you_mean
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +100,7 @@ async def process_query(user_query, history):
     """
     Calls Azure OpenAI to determine the next action:
     - If missing parameters, queries OpenSearch for valid options.
+    - If input is slightly incorrect, queries OpenSearch for similar matches.
     - If an NLP response is needed, returns a structured message.
     - If ready for OpenSearch, returns tool_calls.
     """
@@ -66,18 +134,7 @@ async def process_query(user_query, history):
         # Handle follow-up cases by fetching valid options from OpenSearch
         if parsed_response["response_type"] == "follow_up":
             follow_up_question = parsed_response["follow_up"]["question"]
-
-            # Determine what data needs to be fetched
-            if "formulary" in follow_up_question.lower():
-                options = await query_valid_options("formulary")
-            elif "year" in follow_up_question.lower():
-                options = await query_valid_options("year")
-            elif "drug" in follow_up_question.lower():
-                options = await query_valid_options("drug")
-            else:
-                options = []
-
-            # Return follow-up with dynamically fetched options
+            options = await query_valid_options(follow_up_question)
             return {
                 "response_type": "follow_up",
                 "follow_up": {
@@ -86,7 +143,19 @@ async def process_query(user_query, history):
                 }
             }
 
-        return parsed_response  # Returning Python dict (FastAPI auto-converts to JSON)
+        # Handle "Did You Mean?" cases by fetching closest matches from OpenSearch
+        if parsed_response["response_type"] == "did_you_mean":
+            match_question = parsed_response["did_you_mean"]["question"]
+            matches = await query_did_you_mean(user_query)
+            return {
+                "response_type": "did_you_mean",
+                "did_you_mean": {
+                    "question": match_question,
+                    "options": matches
+                }
+            }
+
+        return parsed_response
 
     except json.JSONDecodeError:
         logger.error("LLM response is not valid JSON.")
@@ -111,8 +180,8 @@ async def process_query(user_query, history):
 
 ---
 
-# **✅ New Function in `opensearch.py`**
-This function **fetches valid options** from OpenSearch **before asking a follow-up question**.
+## **3️⃣ New `query_did_you_mean()` in `opensearch.py`**
+This function **fetches closest matches from OpenSearch**.
 
 ```python
 import os
@@ -123,117 +192,37 @@ logger = logging.getLogger(__name__)
 
 OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://localhost:9200/fps_um/_search")
 
-async def query_valid_options(option_type):
+async def query_did_you_mean(user_input):
     """
-    Fetches valid options (formulary names, years, or drugs) from OpenSearch.
+    Searches OpenSearch for similar terms when user input does not match exactly.
     """
-    query_conditions = []
-
-    if option_type == "formulary":
-        query = {
-            "size": 1000,
-            "_source": ["formulary_name"],
-            "query": {"match_all": {}}
+    query = {
+        "size": 5,  # Limit results
+        "_source": ["formulary_name"],
+        "query": {
+            "fuzzy": {  # Use fuzzy search to find close matches
+                "formulary_name": {
+                    "value": user_input,
+                    "fuzziness": "AUTO"
+                }
+            }
         }
-    elif option_type == "year":
-        query = {
-            "size": 1000,
-            "_source": ["invoice_yr"],
-            "query": {"match_all": {}}
-        }
-    elif option_type == "drug":
-        query = {
-            "size": 1000,
-            "_source": ["brand_name"],
-            "query": {"match_all": {}}
-        }
-    else:
-        return []
+    }
 
     response = requests.post(OPENSEARCH_URL, json=query)
     
     if response.status_code == 200:
         data = response.json()
         hits = data.get("hits", {}).get("hits", [])
-        options = list(set(hit["_source"][option_type] for hit in hits if option_type in hit["_source"]))
-        return sorted(options)  # Returning sorted list of unique options
+        options = list(set(hit["_source"]["formulary_name"] for hit in hits if "formulary_name" in hit["_source"]))
+        return sorted(options)  # Returning sorted list of unique matches
     else:
         return []
 ```
 
 ---
 
-# **✅ Updated `routes.py`**
-This ensures that if `"follow_up"` is returned, the bot **presents dynamic options**.
-
-```python
-from fastapi import APIRouter
-from services.ai_gateway import process_query, format_response_with_llm
-from services.opensearch import query_opensearch
-import logging
-
-router = APIRouter()
-conversation_history = {}
-
-@router.post("/chat/{conversation_id}")
-async def ask_bot(conversation_id: str, request: dict):
-    """Process user query, handle follow-ups, or run tool calls."""
-    
-    user_query = request.get("query", "")
-    logging.info(f"User query: {user_query}")
-
-    # Retrieve or init conversation history
-    if conversation_id not in conversation_history:
-        conversation_history[conversation_id] = []
-    history = conversation_history[conversation_id]
-
-    # Add user message to history
-    history.append({"role": "user", "content": user_query})
-
-    # Send to LLM
-    ai_response = await process_query(user_query, history)
-
-    # Add LLM response to history
-    history.append({"role": "assistant", "content": str(ai_response)})
-
-    # Handle response types
-    response_type = ai_response.get("response_type")
-
-    if response_type == "follow_up":
-        return {
-            "response_type": "follow_up",
-            "follow_up": ai_response["follow_up"]
-        }
-
-    if response_type == "message":
-        return {
-            "response_type": "message",
-            "message": ai_response["message"]
-        }
-
-    if response_type == "tool_calls":
-        results = await query_opensearch(ai_response["tool_calls"], history)
-        formatted_results = await format_response_with_llm(results, history)
-        return {
-            "response_type": "message",
-            "message": {
-                "text": formatted_results,
-                "context": "info"
-            }
-        }
-
-    return {
-        "response_type": "message",
-        "message": {
-            "text": "Unexpected response type.",
-            "context": "error"
-        }
-    }
-```
-
----
-
-# **✅ Example Bot Behavior (Dynamic Follow-Ups)**
+## **4️⃣ Example Bot Behavior**
 
 ### **Case 1: Missing Year (Follow-Up with Valid Options)**
 👤 **User**: *"What are the drugs under Express Scripts?"*  
@@ -250,14 +239,14 @@ async def ask_bot(conversation_id: str, request: dict):
 
 ---
 
-### **Case 2: Missing Formulary (Follow-Up with Options)**
-👤 **User**: *"What is the placement of Lipitor?"*  
-🤖 **Bot Response (JSON)** (Fetched valid formularies from OpenSearch)
+### **Case 2: Did You Mean?**
+👤 **User**: *"What are the drugs under Expres Scipts?"*  
+🤖 **Bot Response (JSON)** (Using fuzzy search in OpenSearch)
 ```json
 {
-  "response_type": "follow_up",
-  "follow_up": {
-    "question": "Which formulary are you referring to?",
+  "response_type": "did_you_mean",
+  "did_you_mean": {
+    "question": "Did you mean one of these?",
     "options": ["Express Scripts", "BlueCross", "Aetna"]
   }
 }
@@ -266,9 +255,9 @@ async def ask_bot(conversation_id: str, request: dict):
 ---
 
 ### **🚀 Summary of Fixes**
-✔ **The bot now queries OpenSearch for valid options before asking follow-ups.**  
-✔ **The follow-up response contains real options, not hardcoded ones.**  
-✔ **Ensures consistency in structured responses.**  
-✔ **Dynamic interaction—bot intelligently asks for missing details without guessing.**  
+✔ **Adds `"did_you_mean"` for fuzzy matches in OpenSearch**  
+✔ **Prevents user errors by offering suggestions**  
+✔ **Ensures structured JSON output**  
+✔ **Makes the bot more user-friendly and interactive**  
 
-🚀 **Now your bot can fetch real options dynamically before asking follow-ups!** Let me know if you need refinements! 🎯
+🚀 **Now your bot can handle typos and suggest corrections!** Let me know if you need more improvements! 🎯
