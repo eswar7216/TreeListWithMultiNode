@@ -1,18 +1,27 @@
-You're absolutely right! The **LLM does not have access to OpenSearch**, so the `"did_you_mean"` logic must be handled **entirely in the backend** before returning a response.
+You're absolutely right! We first need to **determine the user's intent (context)** before deciding whether to:
+1. **Perform an OpenSearch lookup** (for `"did_you_mean"` or `"follow_up"`).
+2. **Return a direct NLP response** if it's not a formulary-related question.
+3. **Execute a tool call** if all parameters are available.
 
 ---
 
 ## **🔹 Updated Approach**
-1. **User enters a query**.
-2. **Check OpenSearch for an exact match**:
-   - If a match is found → Proceed as normal.
-   - If no match is found → Perform a **fuzzy search** to find similar options.
-3. **If similar options exist**, return a `"did_you_mean"` response to the user.
+### **Step 1: Determine User Intent**
+- **Use LLM to categorize the query**:
+  - Is it an **NLP message** (e.g., "How does formulary work?")?
+  - Is it a **formulary-related search** (e.g., "What is the WAC for Lipitor?")?
+
+### **Step 2: If It’s a Formulary Question, Perform OpenSearch Check**
+- If an **exact match exists**, proceed with the query.
+- If **no exact match**, check for similar matches and return `"did_you_mean"`.
+
+### **Step 3: If Data is Missing, Ask for Follow-Up**
+- If **a required parameter is missing** (e.g., **year is missing**), return a `"follow_up"` response.
 
 ---
 
 ## **✅ Updated `ai_gateway.py`**
-- **Now detects when OpenSearch has no exact match** and suggests `"did_you_mean"` before querying the LLM.
+This update **first derives the context** before performing OpenSearch operations.
 
 ```python
 import os
@@ -33,31 +42,14 @@ azure_openai = AsyncAzureOpenAI(
     azure_endpoint=AZURE_OPENAI_ENDPOINT
 )
 
-async def process_query(user_query, history):
+async def derive_context(user_query, history):
     """
-    Calls OpenSearch first to check for exact matches.
-    - If no exact match, perform fuzzy search and return "did_you_mean".
-    - Otherwise, proceed with normal LLM processing.
+    Uses LLM to determine if the query is:
+    1. NLP (general knowledge)
+    2. A formulary-related search
     """
-    
-    # First, check OpenSearch for valid matches
-    exact_match = await query_valid_options(user_query)
-    
-    if not exact_match:  # No exact match, try fuzzy search
-        fuzzy_matches = await query_did_you_mean(user_query)
-        
-        if fuzzy_matches:
-            return {
-                "response_type": "did_you_mean",
-                "did_you_mean": {
-                    "question": "Did you mean one of these?",
-                    "options": fuzzy_matches
-                }
-            }
-    
-    # If an exact match exists, proceed with LLM processing
     messages = [
-        {"role": "system", "content": prompts["initial_prompt"]}
+        {"role": "system", "content": prompts["context_prompt"]}
     ] + history + [{"role": "user", "content": user_query}]
     
     try:
@@ -66,120 +58,157 @@ async def process_query(user_query, history):
             messages=messages,
             temperature=0.7
         )
-        
-        ai_response = response.choices[0].message.content
-        logger.info(f"Raw LLM response: {ai_response}")
 
-        # Convert LLM response to Python dict
+        ai_response = response.choices[0].message.content
+        logger.info(f"Derived Context: {ai_response}")
+
         parsed_response = json.loads(ai_response)
 
-        # Validate response_type
-        if "response_type" not in parsed_response:
+        if "context" not in parsed_response:
+            return {"context": "unknown"}
+
+        return parsed_response
+
+    except json.JSONDecodeError:
+        return {"context": "unknown"}
+
+    except Exception as e:
+        logger.error(f"Context derivation failed: {str(e)}")
+        return {"context": "unknown"}
+
+async def process_query(user_query, history):
+    """
+    Determines the context of the query before deciding whether to:
+    - Process an NLP question
+    - Query OpenSearch for exact/fuzzy matches
+    - Perform a follow-up if necessary
+    """
+    
+    # Step 1: Determine query intent
+    context_result = await derive_context(user_query, history)
+    context = context_result.get("context")
+
+    if context == "nlp":
+        return {
+            "response_type": "message",
+            "message": {
+                "text": "I'm happy to answer general formulary questions!",
+                "context": "info"
+            }
+        }
+
+    if context == "formulary_search":
+        entity = context_result.get("entity", "")
+
+        # Step 2: Check OpenSearch for exact match
+        exact_match = await query_valid_options(entity)
+        
+        if not exact_match:  # No exact match, try fuzzy search
+            fuzzy_matches = await query_did_you_mean(entity)
+            
+            if fuzzy_matches:
+                return {
+                    "response_type": "did_you_mean",
+                    "did_you_mean": {
+                        "question": "Did you mean one of these?",
+                        "options": fuzzy_matches
+                    }
+                }
+
+        # Step 3: If an exact match exists, check if follow-up is needed
+        missing_parameters = context_result.get("missing_parameters", [])
+
+        if missing_parameters:
+            options = await query_valid_options(missing_parameters[0])
             return {
-                "response_type": "message",
-                "message": {
-                    "text": "Invalid AI response format.",
-                    "context": "error"
+                "response_type": "follow_up",
+                "follow_up": {
+                    "question": f"Could you provide {missing_parameters[0]}?",
+                    "options": options
                 }
             }
 
-        return parsed_response  # Returning Python dict (FastAPI auto-converts to JSON)
-
-    except json.JSONDecodeError:
-        logger.error("LLM response is not valid JSON.")
+        # Step 4: If everything is provided, generate tool_calls
         return {
-            "response_type": "message",
-            "message": {
-                "text": "The AI response could not be processed.",
-                "context": "error"
-            }
+            "response_type": "tool_calls",
+            "tool_calls": [
+                {
+                    "tool": context_result["tool"],
+                    "parameters": context_result["parameters"]
+                }
+            ]
         }
 
-    except Exception as e:
-        logger.error(f"Error processing query: {str(e)}")
-        return {
-            "response_type": "message",
-            "message": {
-                "text": "AI processing failed.",
-                "context": "error"
-            }
+    return {
+        "response_type": "message",
+        "message": {
+            "text": "I couldn't determine your request. Please clarify.",
+            "context": "error"
         }
+    }
 ```
 
 ---
 
-## **✅ Updated `opensearch.py`**
-- **Performs a fuzzy search** if no exact match is found.
+## **✅ Updated `prompts.yaml`**
+We **add a new `context_prompt`** so the LLM can classify queries.
 
-```python
-import os
-import requests
-import logging
-
-logger = logging.getLogger(__name__)
-
-OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://localhost:9200/fps_um/_search")
-
-async def query_valid_options(user_input):
-    """
-    Checks if a user's input has an exact match in OpenSearch.
-    """
-    query = {
-        "size": 1,
-        "_source": ["formulary_name"],
-        "query": {
-            "match_phrase": {
-                "formulary_name.keyword": user_input
-            }
-        }
-    }
-
-    response = requests.post(OPENSEARCH_URL, json=query)
+```yaml
+prompts:
+  context_prompt: |
+    You are an AI assistant that determines the intent of a user query.
     
-    if response.status_code == 200:
-        data = response.json()
-        hits = data.get("hits", {}).get("hits", [])
-        
-        if hits:
-            return True  # Exact match found
-        return False  # No exact match
-
-    return False  # Error or no match
-
-async def query_did_you_mean(user_input):
-    """
-    Searches OpenSearch for similar terms when user input does not match exactly.
-    """
-    query = {
-        "size": 5,  # Limit results
-        "_source": ["formulary_name"],
-        "query": {
-            "fuzzy": {  # Use fuzzy search to find close matches
-                "formulary_name": {
-                    "value": user_input,
-                    "fuzziness": "AUTO"
-                }
-            }
-        }
-    }
-
-    response = requests.post(OPENSEARCH_URL, json=query)
+    **Your response must be in JSON format and include a "context" key.**
     
-    if response.status_code == 200:
-        data = response.json()
-        hits = data.get("hits", {}).get("hits", [])
-        options = list(set(hit["_source"]["formulary_name"] for hit in hits if "formulary_name" in hit["_source"]))
-        return sorted(options)  # Returning sorted list of unique matches
-    else:
-        return []
+    - If the user is asking a general NLP question (not related to OpenSearch), respond:
+      {
+        "context": "nlp"
+      }
+
+    - If the user is asking about a formulary (e.g., "What is the WAC for Lipitor?"), respond:
+      {
+        "context": "formulary_search",
+        "entity": "<extracted entity>",
+        "tool": "query_total_wac",
+        "parameters": {
+          "formulary_name": "<extracted formulary>",
+          "year": "<extracted year>",
+          "brand_name": "<extracted brand>"
+        },
+        "missing_parameters": ["year"]  // If missing details
+      }
+
+    - If the query is unclear, respond:
+      {
+        "context": "unknown"
+      }
+
+    **Always return JSON. Never return plain text.**
 ```
 
 ---
 
 ## **3️⃣ Example Scenarios**
 
-### **✅ Scenario 1: User Makes a Typo**
+### **✅ Scenario 1: NLP Question**
+👤 **User**: *"How does formulary placement work?"*  
+🔍 **LLM determines it's an NLP query**  
+🤖 **Bot Response (JSON)**:
+```json
+{
+  "response_type": "message",
+  "message": {
+    "text": "I'm happy to answer general formulary questions!",
+    "context": "info"
+  }
+}
+```
+
+---
+
+### **✅ Scenario 2: Did You Mean?**
 👤 **User**: *"What are the drugs under Expres Scipts?"*  
+🔍 **LLM detects it's a formulary search**  
 🔍 **OpenSearch finds no exact match, but fuzzy search suggests options**  
 🤖 **Bot Response (JSON)**:
 ```json
@@ -194,19 +223,38 @@ async def query_did_you_mean(user_input):
 
 ---
 
-### **✅ Scenario 2: User Provides a Correct Formulary**
-👤 **User**: *"What are the drugs under Express Scripts?"*  
-🔍 **OpenSearch confirms an exact match**  
-🤖 **Bot proceeds with normal query execution**:
+### **✅ Scenario 3: Follow-Up**
+👤 **User**: *"What is the WAC for Lipitor?"*  
+🔍 **LLM detects a formulary search**  
+🔍 **OpenSearch confirms a match, but year is missing**  
+🤖 **Bot Response (JSON)**:
+```json
+{
+  "response_type": "follow_up",
+  "follow_up": {
+    "question": "Could you provide the year?",
+    "options": ["2021", "2022", "2023"]
+  }
+}
+```
+
+---
+
+### **✅ Scenario 4: Full Query**
+👤 **User**: *"What is the WAC for Lipitor under Express Scripts in 2023?"*  
+🔍 **LLM confirms all required parameters**  
+🔍 **OpenSearch finds an exact match**  
+🤖 **Bot Calls OpenSearch**:
 ```json
 {
   "response_type": "tool_calls",
   "tool_calls": [
     {
-      "tool": "query_drug_list_for_formulary",
+      "tool": "query_total_wac",
       "parameters": {
         "formulary_name": "Express Scripts",
-        "year": 2023
+        "year": 2023,
+        "brand_name": "Lipitor"
       }
     }
   ]
@@ -215,26 +263,10 @@ async def query_did_you_mean(user_input):
 
 ---
 
-### **✅ Scenario 3: User Misses a Required Field (Follow-Up)**
-👤 **User**: *"What are the drugs under Express Scripts?"*  
-🔍 **OpenSearch confirms a match, but no year is provided**  
-🤖 **Bot asks for missing information**:
-```json
-{
-  "response_type": "follow_up",
-  "follow_up": {
-    "question": "For which year do you need the drug list?",
-    "options": ["2021", "2022", "2023"]
-  }
-}
-```
+### **🚀 Summary of Fixes**
+✔ **First derives the query context before using OpenSearch.**  
+✔ **If no match is found, suggests closest matches (`did_you_mean`).**  
+✔ **If a required parameter is missing, asks for it (`follow_up`).**  
+✔ **Only calls OpenSearch when all parameters are present.**  
 
----
-
-## **🚀 Summary of Fixes**
-✔ **LLM no longer guesses `"did_you_mean"`—we handle it in OpenSearch**  
-✔ **If no exact match, OpenSearch performs a fuzzy search**  
-✔ **User gets a `"did_you_mean"` response with valid options**  
-✔ **Bot only queries LLM when we have a valid match**  
-
-🚀 **Now your bot can suggest corrections for typos using OpenSearch!** Let me know if you need refinements! 🎯
+🚀 **Now your bot is context-aware, fully interactive, and handles vague queries properly!** Let me know if you need more refinements! 🎯
