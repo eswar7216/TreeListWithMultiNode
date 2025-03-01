@@ -1,62 +1,17 @@
-The issue occurs because **`query_valid_options` expects an entity type like "formulary", "year", or "drug"**, but the **LLM is not correctly extracting the entity** from the user's question. Instead, it's returning the full question as the entity.
-
-To **fix this**, we need to **improve the LLM's ability to extract the correct entity type** by refining the `context_prompt` and modifying how `query_valid_options` is used.
-
----
-
-## **🔹 Fixing the Entity Extraction Issue**
-### **1️⃣ Updates to `context_prompt` (Better Entity Extraction)**
-Modify `prompts.yaml` so that the LLM extracts **correct entity types** (`formulary_name`, `year`, `brand_name`) instead of the full question.
-
-```yaml
-prompts:
-  context_prompt: |
-    You are an AI assistant that determines the intent of a user query.
-    
-    **Your response must be in JSON format and include a "context" key.**
-    
-    - If the user is greeting (e.g., "Hello", "Hi", "Hey"), respond:
-      {
-        "context": "greeting"
-      }
-
-    - If the user is asking a general NLP question (e.g., "How does formulary placement work?", "What is WAC?", "Tell me about Express Scripts"), respond:
-      {
-        "context": "nlp",
-        "message": "Formulary placement determines where a drug is listed in an insurance plan. Would you like to ask about a specific formulary?"
-      }
-
-    - If the user is asking about a formulary search (e.g., "What is the WAC for Lipitor?"), extract **only the relevant entities** and return:
-      {
-        "context": "formulary_search",
-        "entity_type": "formulary_name",
-        "entity_value": "Express Scripts",
-        "tool": "query_total_wac",
-        "parameters": {
-          "formulary_name": "Express Scripts",
-          "year": "2023",
-          "brand_name": "Lipitor"
-        },
-        "missing_parameters": ["year"]  // If missing details
-      }
-
-    - If the query is unclear, respond:
-      {
-        "context": "unknown",
-        "message": "I'm not sure I understood your request. Can you clarify?"
-      }
-
-    **Always return JSON. Never return plain text.**
-```
-✅ **What changed?**
-- Instead of `"entity": "<extracted entity>"`, it now returns:
-  - `"entity_type": "<formulary_name | year | brand_name>"`
-  - `"entity_value": "<Express Scripts | 2023 | Lipitor>"`
+### **🔹 Handling User Response to "Did You Mean?"**
+You want the bot to:
+1. **If `"did_you_mean"` provides multiple options**, the user should select one and the bot should process it.
+2. **If `"did_you_mean"` provides only one option**, the user can say "Yes" or confirm, and the bot should proceed automatically.
+3. **If the user provides an unclear response**, the bot should prompt again.
 
 ---
 
-### **2️⃣ Fixing `process_query()` in `ai_gateway.py`**
-We now **extract `entity_type` and `entity_value` separately** and **use them properly** when querying OpenSearch.
+## **✅ Steps to Fix**
+### **1️⃣ Modify `process_query()` in `ai_gateway.py`**
+- If the user response comes **after a `"did_you_mean"`**, check:
+  - If they said **"Yes" or "Confirm"**, use the single available option.
+  - If they selected an option, proceed.
+  - If the response is unclear, re-prompt.
 
 ```python
 async def process_query(user_query, history):
@@ -64,13 +19,62 @@ async def process_query(user_query, history):
     Determines the context of the query before deciding whether to:
     - Process an NLP question
     - Query OpenSearch for exact/fuzzy matches
+    - Handle responses to "Did You Mean?"
     - Perform a follow-up if necessary
-    - Handle greetings properly
     """
     
     # Step 1: Determine query intent
     context_result = await derive_context(user_query, history)
     context = context_result.get("context")
+
+    # Check if last response was "Did You Mean?"
+    last_bot_response = history[-1] if history else None
+    if last_bot_response and last_bot_response.get("response_type") == "did_you_mean":
+        did_you_mean_options = last_bot_response["did_you_mean"]["options"]
+
+        # If user says "Yes", assume they accept the only option
+        if len(did_you_mean_options) == 1 and user_query.lower() in ["yes", "confirm", "correct"]:
+            entity_value = did_you_mean_options[0]  # Use the single available option
+            entity_type = last_bot_response.get("did_you_mean").get("entity_type")
+            history.append({"role": "user", "content": f"Selected: {entity_value}"})
+        
+        # If they specify one of the options, use it
+        elif user_query in did_you_mean_options:
+            entity_value = user_query
+            entity_type = last_bot_response.get("did_you_mean").get("entity_type")
+            history.append({"role": "user", "content": f"Selected: {entity_value}"})
+        
+        else:
+            # If the user gives an invalid response, ask again
+            return {
+                "response_type": "did_you_mean",
+                "did_you_mean": {
+                    "question": "Please choose one of the options:",
+                    "options": did_you_mean_options
+                }
+            }
+
+        # Now that we have a confirmed entity, proceed with OpenSearch lookup
+        exact_match = await query_valid_options(entity_type)
+        if not exact_match:
+            return {
+                "response_type": "message",
+                "message": {
+                    "text": f"'{entity_value}' was not found in the database.",
+                    "context": "error"
+                }
+            }
+
+        # Proceed with formulating the correct tool call
+        return {
+            "response_type": "tool_calls",
+            "tool_calls": [
+                {
+                    "tool": context_result["tool"],
+                    "parameters": {entity_type: entity_value}
+                }
+            ]
+        }
 
     # Handle Greetings
     if context == "greeting":
@@ -94,8 +98,8 @@ async def process_query(user_query, history):
 
     # Handle Formulary Search Queries
     if context == "formulary_search":
-        entity_type = context_result.get("entity_type")  # Extract entity type (formulary_name, year, brand_name)
-        entity_value = context_result.get("entity_value")  # Extract actual value
+        entity_type = context_result.get("entity_type")  
+        entity_value = context_result.get("entity_value")  
 
         if not entity_type or not entity_value:
             return {
@@ -117,7 +121,8 @@ async def process_query(user_query, history):
                     "response_type": "did_you_mean",
                     "did_you_mean": {
                         "question": "Did you mean one of these?",
-                        "options": fuzzy_matches
+                        "options": fuzzy_matches,
+                        "entity_type": entity_type
                     }
                 }
 
@@ -167,90 +172,68 @@ async def process_query(user_query, history):
 
 ---
 
-### **3️⃣ Fixing `query_valid_options()` in `opensearch.py`**
-Right now, `query_valid_options()` is failing because it's getting an **incorrect `option_type`** (the entire user question instead of "formulary" or "year").
-
-#### **✅ Fix it by making it accept `"entity_type"` instead**
-```python
-async def query_valid_options(entity_type):
-    """
-    Fetches valid options (formulary names, years, or drugs) from OpenSearch.
-    Used for "follow_up" questions when details are missing.
-    """
-    query = {}
-
-    if entity_type == "formulary_name":
-        query = {
-            "size": 1000,
-            "_source": ["formulary_name"],
-            "query": {"match_all": {}}
-        }
-    elif entity_type == "year":
-        query = {
-            "size": 1000,
-            "_source": ["invoice_yr"],
-            "query": {"match_all": {}}
-        }
-    elif entity_type == "brand_name":
-        query = {
-            "size": 1000,
-            "_source": ["brand_name"],
-            "query": {"match_all": {}}
-        }
-    else:
-        return []
-
-    try:
-        response = requests.post(OPENSEARCH_URL, json=query)
-        
-        if response.status_code == 200:
-            data = response.json()
-            hits = data.get("hits", {}).get("hits", [])
-            options = list(set(hit["_source"][entity_type] for hit in hits if entity_type in hit["_source"]))
-            return sorted(options)  # Returning sorted list of unique options
-        else:
-            logger.error(f"OpenSearch returned an error: {response.status_code}")
-            return []
-
-    except Exception as e:
-        logger.error(f"Error querying OpenSearch: {str(e)}")
-        return []
+## **✅ Expected Bot Behavior After Fix**
+### **Scenario 1: User Selects an Option**
+👤 **User**: *"What are the drugs under Expres Scipts?"*  
+🔍 **OpenSearch finds no exact match, but fuzzy search suggests options**  
+🤖 **Bot Response (JSON)**:
+```json
+{
+  "response_type": "did_you_mean",
+  "did_you_mean": {
+    "question": "Did you mean one of these?",
+    "options": ["Express Scripts", "Express RX", "Express Plan"],
+    "entity_type": "formulary_name"
+  }
+}
 ```
+👤 **User**: *"Express RX"*
+🤖 **Bot Proceeds with Query**
 
 ---
 
-## **✅ Expected Behavior After Fixes**
-### **Before (Incorrect Behavior)**
-👤 **User**: *"What is the WAC for Lipitor under Express Scripts?"*  
-❌ **LLM Response**:  
+### **Scenario 2: User Says "Yes" When Only One Option Exists**
+👤 **User**: *"What are the drugs under Expres Scipts?"*  
+🔍 **OpenSearch finds one possible match: "Express Scripts"**  
+🤖 **Bot Response (JSON)**:
 ```json
 {
-  "context": "formulary_search",
-  "entity": "What is the WAC for Lipitor under Express Scripts?"
+  "response_type": "did_you_mean",
+  "did_you_mean": {
+    "question": "Did you mean Express Scripts?",
+    "options": ["Express Scripts"],
+    "entity_type": "formulary_name"
+  }
 }
 ```
-🚨 **Problem:** `"entity"` is the entire user question!
+👤 **User**: *"Yes"*
+🤖 **Bot Proceeds with Query Automatically**
 
 ---
 
-### **After Fix (Correct Behavior)**
-👤 **User**: *"What is the WAC for Lipitor under Express Scripts?"*  
-✅ **LLM Response**:  
+### **Scenario 3: User Gives an Invalid Response**
+👤 **User**: *"What are the drugs under Expres Scipts?"*  
+🔍 **OpenSearch finds no exact match, but fuzzy search suggests options**  
+🤖 **Bot Response (JSON)**:
 ```json
 {
-  "context": "formulary_search",
-  "entity_type": "formulary_name",
-  "entity_value": "Express Scripts"
+  "response_type": "did_you_mean",
+  "did_you_mean": {
+    "question": "Did you mean one of these?",
+    "options": ["Express Scripts", "Express RX", "Express Plan"],
+    "entity_type": "formulary_name"
+  }
 }
 ```
-🎯 **Fix:** Now, `entity_type` is `"formulary_name"` and `entity_value` is `"Express Scripts"`, so OpenSearch queries work correctly.
+👤 **User**: *"I don't know"*  
+🤖 **Bot Re-prompts with the same options**
 
 ---
 
 ## **🚀 Summary of Fixes**
-✔ **LLM now correctly extracts `"entity_type"` and `"entity_value"`**  
-✔ **Fixed `query_valid_options()` to use `"entity_type"` instead of full user question**  
-✔ **Ensured bot properly queries OpenSearch for `"follow_up"` and `"did_you_mean"`**  
-✔ **Prevents bot from returning empty lists when checking OpenSearch**  
+✔ **Handles cases where user selects an option from `"did_you_mean"`**  
+✔ **Handles `"Yes"` confirmation when only one match exists**  
+✔ **Re-prompts if user input is unclear**  
+✔ **Ensures OpenSearch is used efficiently and correctly**  
 
-🚀 **Now the bot correctly understands user queries!** Let me know if you need further refinements! 🎯
+🚀 **Now the bot is more interactive and adapts intelligently to user input!** Let me know if you need further refinements! 🎯
