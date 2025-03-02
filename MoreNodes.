@@ -1,68 +1,73 @@
-Yes! You can **rely on the LLM** to handle `"did_you_mean"` confirmations and selections instead of managing it explicitly in code. This would allow the **bot prompt itself** to decide:
-- If the user **accepts the suggested option** (saying "Yes" or "Confirm").
-- If the user **selects one of the multiple options**.
-- If the user **provides an invalid response**, ask again.
+### **🔹 Ensuring the LLM Returns Supported `tool_calls` and Handling in OpenSearch**
+To make sure the LLM **only generates tool_calls that our system supports**, we need to:
+1. **Define a strict list of supported `tool_calls` and parameters.**
+2. **Ensure LLM returns parameters in a structured and predictable format.**
+3. **Dynamically process tool calls in OpenSearch based on parameter availability.**
 
 ---
 
-## **🔹 How to Do This Using LLM**
-### **1️⃣ Modify `prompts.yaml` to Include "Did You Mean" Handling**
-We will enhance the **LLM’s ability to understand user responses to `"did_you_mean"`**.
+## **✅ 1️⃣ Defining Supported `tool_calls` in `prompts.yaml`**
+We will modify the `context_prompt` to enforce **strictly defined tools** with valid parameters.
 
 ```yaml
 prompts:
   context_prompt: |
-    You are an AI assistant that determines the intent of a user query.
+    You are an AI assistant that determines the intent of a user query and generates structured tool calls.
 
-    **Your response must be in JSON format and include a "context" key.**
-    
-    - If the user is greeting (e.g., "Hello", "Hi", "Hey"), respond:
-      {
-        "context": "greeting"
-      }
+    **Your response must always be in JSON format with a "context" key.**
 
-    - If the user is asking a general NLP question (e.g., "How does formulary placement work?", "What is WAC?", "Tell me about Express Scripts"), respond:
+    - If the user is asking a general NLP question (e.g., "How does formulary placement work?"), respond:
       {
         "context": "nlp",
         "message": "Formulary placement determines where a drug is listed in an insurance plan. Would you like to ask about a specific formulary?"
       }
 
-    - If the user is asking about a formulary search (e.g., "What is the WAC for Lipitor?"), extract **only the relevant entities** and return:
+    - If the user is searching for formulary details, respond with one of the predefined tool calls:
+
+      **Supported `tool_calls`:**
+      1. `"query_formulary"` → Requires `formulary_name`, `year`, `attribute`
+      2. `"query_drug_list"` → Requires `formulary_name`, `year`
+      3. `"query_fps_placement"` → Requires `formulary_name`, `year`, `brand_name`
+      4. `"query_um_rules"` → Requires `formulary_name`, `year`, `brand_name`
+      5. `"query_total_wac"` → Requires `formulary_name`, `year`, `brand_name`
+      
+      **If any required parameter is missing, include it in `"missing_parameters"` for a follow-up prompt.**
+
+      **Example Correct Response for "What is the WAC for Lipitor under Express Scripts in 2023?"**
+      ```json
       {
         "context": "formulary_search",
-        "entity_type": "formulary_name",
-        "entity_value": "Express Scripts",
-        "tool": "query_total_wac",
-        "parameters": {
-          "formulary_name": "Express Scripts",
-          "year": "2023",
-          "brand_name": "Lipitor"
-        },
-        "missing_parameters": ["year"]  // If missing details
+        "tool_calls": [
+          {
+            "tool": "query_total_wac",
+            "parameters": {
+              "formulary_name": "Express Scripts",
+              "year": 2023,
+              "brand_name": "Lipitor"
+            }
+          }
+        ]
       }
+      ```
 
-    - If OpenSearch provides a `"did_you_mean"` suggestion and the user responds:
-      - If there is only **one** option and the user says "Yes" or "Confirm":
-        {
-          "context": "did_you_mean",
-          "selected_value": "<option_provided>",
-          "confirmed": true
-        }
-      - If there are **multiple** options and the user selects one:
-        {
-          "context": "did_you_mean",
-          "selected_value": "<selected_option>",
-          "confirmed": true
-        }
-      - If the user provides an **invalid response** (not Yes/Confirm or a valid option):
-        {
-          "context": "did_you_mean",
-          "selected_value": null,
-          "confirmed": false,
-          "message": "I didn't understand your selection. Please choose a valid option."
-        }
+      **Example Response When a Parameter is Missing:**
+      ```json
+      {
+        "context": "formulary_search",
+        "tool_calls": [
+          {
+            "tool": "query_total_wac",
+            "parameters": {
+              "formulary_name": "Express Scripts",
+              "brand_name": "Lipitor"
+            }
+          }
+        ],
+        "missing_parameters": ["year"]
+      }
+      ```
 
-    - If the query is unclear, respond:
+    - If the query is unclear or not related to formulary data, respond:
       {
         "context": "unknown",
         "message": "I'm not sure I understood your request. Can you clarify?"
@@ -71,68 +76,23 @@ prompts:
     **Always return JSON. Never return plain text.**
 ```
 
-✅ **What changed?**
-- The LLM **understands when a user confirms ("Yes")** or selects from multiple options.
-- If the user **responds incorrectly**, the LLM itself asks them to reselect.
-- The bot **doesn't have to check manually**—LLM now determines `"did_you_mean"` selection.
-
 ---
 
-### **2️⃣ Modify `process_query()` in `ai_gateway.py`**
-Instead of handling `"did_you_mean"` responses manually, we **let the LLM handle it**.
+## **✅ 2️⃣ Handling `tool_calls` in `ai_gateway.py`**
+Now that the LLM is **forced** to return structured `tool_calls`, we dynamically execute the correct OpenSearch query.
 
 ```python
 async def process_query(user_query, history):
     """
-    Determines the context of the query before deciding whether to:
-    - Process an NLP question
-    - Query OpenSearch for exact/fuzzy matches
-    - Handle "Did You Mean?" responses automatically using LLM
-    - Perform a follow-up if necessary
+    Determines the context of the query before executing the right OpenSearch query
+    or handling NLP-related questions.
     """
-
-    # Step 1: Let LLM determine the intent
+    
+    # Step 1: Determine query intent
     context_result = await derive_context(user_query, history)
     context = context_result.get("context")
 
-    # Handle User Response to "Did You Mean?"
-    if context == "did_you_mean":
-        selected_value = context_result.get("selected_value")
-        confirmed = context_result.get("confirmed")
-
-        if confirmed and selected_value:
-            # Proceed with OpenSearch query using the selected value
-            history.append({"role": "user", "content": f"Selected: {selected_value}"})
-            return {
-                "response_type": "tool_calls",
-                "tool_calls": [
-                    {
-                        "tool": "query_formulary",
-                        "parameters": {"formulary_name": selected_value}
-                    }
-                ]
-            }
-        
-        # If user response is invalid, return the error message from LLM
-        return {
-            "response_type": "message",
-            "message": {
-                "text": context_result.get("message", "I couldn't understand your selection."),
-                "context": "error"
-            }
-        }
-
-    # Handle Greetings
-    if context == "greeting":
-        return {
-            "response_type": "message",
-            "message": {
-                "text": "Hello! How can I assist you today?",
-                "context": "greeting"
-            }
-        }
-
-    # Handle General NLP Queries
+    # Handle NLP Queries
     if context == "nlp":
         return {
             "response_type": "message",
@@ -144,69 +104,53 @@ async def process_query(user_query, history):
 
     # Handle Formulary Search Queries
     if context == "formulary_search":
-        entity_type = context_result.get("entity_type")
-        entity_value = context_result.get("entity_value")
-
-        if not entity_type or not entity_value:
-            return {
-                "response_type": "message",
-                "message": {
-                    "text": "I couldn't determine the entity in your request.",
-                    "context": "error"
-                }
-            }
-
-        # Step 2: Check OpenSearch for exact match using the correct entity type
-        exact_match = await query_valid_options(entity_type)
-
-        if not exact_match:  # No exact match, try fuzzy search
-            fuzzy_matches = await query_did_you_mean(entity_value)
-            
-            if fuzzy_matches:
-                return {
-                    "response_type": "did_you_mean",
-                    "did_you_mean": {
-                        "question": "Did you mean one of these?",
-                        "options": fuzzy_matches,
-                        "entity_type": entity_type
-                    }
-                }
-
-        # Step 3: If an exact match exists, check if follow-up is needed
+        tool_calls = context_result.get("tool_calls", [])
         missing_parameters = context_result.get("missing_parameters", [])
 
         if missing_parameters:
-            options = await query_valid_options(missing_parameters[0])
             return {
                 "response_type": "follow_up",
                 "follow_up": {
                     "question": f"Could you provide {missing_parameters[0]}?",
-                    "options": options
+                    "options": await query_valid_options(missing_parameters[0])
                 }
             }
 
-        # Step 4: If everything is provided, generate tool_calls
-        return {
-            "response_type": "tool_calls",
-            "tool_calls": [
-                {
-                    "tool": context_result["tool"],
-                    "parameters": context_result["parameters"]
+        if not tool_calls:
+            return {
+                "response_type": "message",
+                "message": {
+                    "text": "I couldn't determine the correct action for your request.",
+                    "context": "error"
                 }
-            ]
-        }
-
-    # Handle Unknown Queries
-    if context == "unknown":
-        return {
-            "response_type": "message",
-            "message": {
-                "text": context_result["message"],
-                "context": "error"
             }
+
+        # Execute each tool call dynamically
+        results = []
+        for tool_call in tool_calls:
+            tool = tool_call["tool"]
+            params = tool_call["parameters"]
+
+            if tool == "query_formulary":
+                result = await query_opensearch("formulary", params)
+            elif tool == "query_drug_list":
+                result = await query_opensearch("drug_list", params)
+            elif tool == "query_fps_placement":
+                result = await query_opensearch("fps_placement", params)
+            elif tool == "query_um_rules":
+                result = await query_opensearch("um_rules", params)
+            elif tool == "query_total_wac":
+                result = await query_opensearch("total_wac", params)
+            else:
+                result = {"error": f"Unsupported tool: {tool}"}
+
+            results.append(result)
+
+        return {
+            "response_type": "opensearch_results",
+            "results": results
         }
 
-    # Default error handling
     return {
         "response_type": "message",
         "message": {
@@ -218,37 +162,66 @@ async def process_query(user_query, history):
 
 ---
 
-## **✅ Expected Bot Behavior After Fix**
-### **Scenario 1: User Selects an Option**
-👤 **User**: *"What are the drugs under Expres Scipts?"*  
-🔍 **OpenSearch finds no exact match, but fuzzy search suggests options**  
-🤖 **Bot Response (JSON)**:
-```json
-{
-  "response_type": "did_you_mean",
-  "did_you_mean": {
-    "question": "Did you mean one of these?",
-    "options": ["Express Scripts", "Express RX", "Express Plan"],
-    "entity_type": "formulary_name"
-  }
-}
+## **✅ 3️⃣ Implementing `query_opensearch()` in `opensearch.py`**
+Since the `tool_calls` are **now standardized**, we can write **a single function** to handle all OpenSearch queries.
+
+```python
+async def query_opensearch(query_type, params):
+    """
+    Handles all OpenSearch queries dynamically based on the query type.
+    """
+    query_conditions = []
+
+    if query_type == "formulary":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+    
+    elif query_type == "drug_list":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+        query_conditions.append({"match": {"year": params["year"]}})
+    
+    elif query_type == "fps_placement":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+        query_conditions.append({"match": {"year": params["year"]}})
+        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
+    
+    elif query_type == "um_rules":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+        query_conditions.append({"match": {"year": params["year"]}})
+        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
+    
+    elif query_type == "total_wac":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+        query_conditions.append({"match": {"year": params["year"]}})
+        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
+
+    else:
+        return {"error": f"Unsupported OpenSearch query type: {query_type}"}
+
+    query = {
+        "size": 1000,
+        "query": {
+            "bool": {
+                "must": query_conditions
+            }
+        }
+    }
+
+    response = requests.post(OPENSEARCH_URL, json=query)
+
+    if response.status_code == 200:
+        data = response.json()
+        hits = data.get("hits", {}).get("hits", [])
+        return [hit["_source"] for hit in hits] if hits else {"error": "No results found."}
+    
+    return {"error": f"Failed to fetch data from OpenSearch. Status: {response.status_code}"}
 ```
-👤 **User**: *"Express RX"*
-🤖 **Bot Proceeds with Query Automatically**
 
 ---
 
-### **Scenario 2: User Says "Yes" When Only One Option Exists**
-👤 **User**: *"What are the drugs under Expres Scipts?"*  
-🔍 **OpenSearch finds one possible match: "Express Scripts"**  
-👤 **User**: *"Yes"*
-🤖 **Bot Proceeds with Query Automatically**
+## **🚀 Summary of Fixes**
+✔ **LLM is now strictly forced to return only supported `tool_calls`.**  
+✔ **Each tool call dynamically runs the correct OpenSearch query.**  
+✔ **Bot now ensures all required parameters exist before querying OpenSearch.**  
+✔ **One function (`query_opensearch`) handles all OpenSearch queries in a structured way.**  
 
----
-
-## **🚀 Summary**
-✔ **LLM handles user confirmation and selection**  
-✔ **Bot dynamically processes `"Yes"` responses for one option**  
-✔ **Less manual logic in `ai_gateway.py`—LLM decides everything**  
-
-🚀 **Now, the bot intelligently manages `"did_you_mean"` using LLM!** Let me know if you need refinements! 🎯
+🚀 **Now, the bot always generates valid tool calls and efficiently queries OpenSearch!** Let me know if you need refinements! 🎯
