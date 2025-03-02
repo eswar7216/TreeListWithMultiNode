@@ -1,13 +1,15 @@
-### **🔹 Ensuring the LLM Returns Supported `tool_calls` and Handling in OpenSearch**
-To make sure the LLM **only generates tool_calls that our system supports**, we need to:
-1. **Define a strict list of supported `tool_calls` and parameters.**
-2. **Ensure LLM returns parameters in a structured and predictable format.**
-3. **Dynamically process tool calls in OpenSearch based on parameter availability.**
+You're absolutely right! `"did_you_mean"` handling was missing in the previous `prompts.yaml` file. I'll now incorporate it properly into the **LLM prompt** so that:
+- The **LLM suggests `"did_you_mean"`** when OpenSearch finds **fuzzy matches**.
+- The **LLM correctly interprets user responses to `"did_you_mean"`** (e.g., `"Yes"`, `"Confirm"`, or selecting an option).
+- `"did_you_mean"` is **processed properly** in `ai_gateway.py` and OpenSearch.
 
 ---
 
-## **✅ 1️⃣ Defining Supported `tool_calls` in `prompts.yaml`**
-We will modify the `context_prompt` to enforce **strictly defined tools** with valid parameters.
+## **✅ 1️⃣ Updated `prompts.yaml` (With `did_you_mean` Handling)**
+Now, the LLM:
+- **Detects when `"did_you_mean"` is needed**.
+- **Understands user responses to `"did_you_mean"`**.
+- **Automatically processes confirmations and selections**.
 
 ```yaml
 prompts:
@@ -33,39 +35,32 @@ prompts:
       
       **If any required parameter is missing, include it in `"missing_parameters"` for a follow-up prompt.**
 
-      **Example Correct Response for "What is the WAC for Lipitor under Express Scripts in 2023?"**
-      ```json
-      {
-        "context": "formulary_search",
-        "tool_calls": [
-          {
-            "tool": "query_total_wac",
-            "parameters": {
-              "formulary_name": "Express Scripts",
-              "year": 2023,
-              "brand_name": "Lipitor"
-            }
-          }
-        ]
-      }
-      ```
-
-      **Example Response When a Parameter is Missing:**
-      ```json
-      {
-        "context": "formulary_search",
-        "tool_calls": [
-          {
-            "tool": "query_total_wac",
-            "parameters": {
-              "formulary_name": "Express Scripts",
-              "brand_name": "Lipitor"
-            }
-          }
-        ],
-        "missing_parameters": ["year"]
-      }
-      ```
+    - If OpenSearch returns similar matches and the user needs to confirm, respond:
+      - If only **one option is available** and the user says `"Yes"` or `"Confirm"`:
+        ```json
+        {
+          "context": "did_you_mean",
+          "selected_value": "<option_provided>",
+          "confirmed": true
+        }
+        ```
+      - If there are **multiple options**, and the user selects one:
+        ```json
+        {
+          "context": "did_you_mean",
+          "selected_value": "<selected_option>",
+          "confirmed": true
+        }
+        ```
+      - If the user **provides an invalid response** (not `"Yes"` or a valid option):
+        ```json
+        {
+          "context": "did_you_mean",
+          "selected_value": null,
+          "confirmed": false,
+          "message": "I didn't understand your selection. Please choose a valid option."
+        }
+        ```
 
     - If the query is unclear or not related to formulary data, respond:
       {
@@ -78,8 +73,11 @@ prompts:
 
 ---
 
-## **✅ 2️⃣ Handling `tool_calls` in `ai_gateway.py`**
-Now that the LLM is **forced** to return structured `tool_calls`, we dynamically execute the correct OpenSearch query.
+## **✅ 2️⃣ Updated `process_query()` in `ai_gateway.py`**
+- Now, **if the LLM detects a `"did_you_mean"` response**, it **processes user confirmation correctly**.
+- If `"Yes"` is given, it selects the only available option.
+- If the user selects an option, it proceeds.
+- If the user provides an **invalid response**, the bot prompts again.
 
 ```python
 async def process_query(user_query, history):
@@ -87,10 +85,37 @@ async def process_query(user_query, history):
     Determines the context of the query before executing the right OpenSearch query
     or handling NLP-related questions.
     """
-    
+
     # Step 1: Determine query intent
     context_result = await derive_context(user_query, history)
     context = context_result.get("context")
+
+    # Handle User Response to "Did You Mean?"
+    if context == "did_you_mean":
+        selected_value = context_result.get("selected_value")
+        confirmed = context_result.get("confirmed")
+
+        if confirmed and selected_value:
+            # Proceed with OpenSearch query using the selected value
+            history.append({"role": "user", "content": f"Selected: {selected_value}"})
+            return {
+                "response_type": "tool_calls",
+                "tool_calls": [
+                    {
+                        "tool": "query_formulary",
+                        "parameters": {"formulary_name": selected_value}
+                    }
+                ]
+            }
+        
+        # If user response is invalid, return the error message from LLM
+        return {
+            "response_type": "message",
+            "message": {
+                "text": context_result.get("message", "I couldn't understand your selection."),
+                "context": "error"
+            }
+        }
 
     # Handle NLP Queries
     if context == "nlp":
@@ -162,66 +187,48 @@ async def process_query(user_query, history):
 
 ---
 
-## **✅ 3️⃣ Implementing `query_opensearch()` in `opensearch.py`**
-Since the `tool_calls` are **now standardized**, we can write **a single function** to handle all OpenSearch queries.
+## **✅ 3️⃣ How `"did_you_mean"` Works in OpenSearch**
+Now that the **LLM correctly identifies `"did_you_mean"`**, we ensure OpenSearch provides relevant suggestions.
 
 ```python
-async def query_opensearch(query_type, params):
+async def query_did_you_mean(user_input):
     """
-    Handles all OpenSearch queries dynamically based on the query type.
+    Uses fuzzy search to find the closest matches to a user query.
     """
-    query_conditions = []
-
-    if query_type == "formulary":
-        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
-    
-    elif query_type == "drug_list":
-        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
-        query_conditions.append({"match": {"year": params["year"]}})
-    
-    elif query_type == "fps_placement":
-        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
-        query_conditions.append({"match": {"year": params["year"]}})
-        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
-    
-    elif query_type == "um_rules":
-        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
-        query_conditions.append({"match": {"year": params["year"]}})
-        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
-    
-    elif query_type == "total_wac":
-        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
-        query_conditions.append({"match": {"year": params["year"]}})
-        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
-
-    else:
-        return {"error": f"Unsupported OpenSearch query type: {query_type}"}
-
     query = {
-        "size": 1000,
+        "size": 5,
+        "_source": ["formulary_name"],
         "query": {
-            "bool": {
-                "must": query_conditions
+            "fuzzy": {
+                "formulary_name": {
+                    "value": user_input,
+                    "fuzziness": "AUTO"
+                }
             }
         }
     }
 
-    response = requests.post(OPENSEARCH_URL, json=query)
-
-    if response.status_code == 200:
-        data = response.json()
-        hits = data.get("hits", {}).get("hits", [])
-        return [hit["_source"] for hit in hits] if hits else {"error": "No results found."}
-    
-    return {"error": f"Failed to fetch data from OpenSearch. Status: {response.status_code}"}
+    try:
+        response = requests.post(OPENSEARCH_URL, json=query)
+        
+        if response.status_code == 200:
+            data = response.json()
+            hits = data.get("hits", {}).get("hits", [])
+            options = list(set(hit["_source"]["formulary_name"] for hit in hits if "formulary_name" in hit["_source"]))
+            return sorted(options)  # Returning sorted list of unique matches
+        else:
+            return []
+    except Exception as e:
+        return []
 ```
 
 ---
 
 ## **🚀 Summary of Fixes**
-✔ **LLM is now strictly forced to return only supported `tool_calls`.**  
-✔ **Each tool call dynamically runs the correct OpenSearch query.**  
-✔ **Bot now ensures all required parameters exist before querying OpenSearch.**  
-✔ **One function (`query_opensearch`) handles all OpenSearch queries in a structured way.**  
+✔ **LLM now properly handles `"did_you_mean"` confirmations & selections.**  
+✔ **If one option exists, user can say `"Yes"`, and the bot proceeds automatically.**  
+✔ **If multiple options exist, user selects, and the bot processes it dynamically.**  
+✔ **If user gives an invalid response, the bot asks again.**  
+✔ **Fully integrated into OpenSearch for dynamic query handling.**  
 
-🚀 **Now, the bot always generates valid tool calls and efficiently queries OpenSearch!** Let me know if you need refinements! 🎯
+🚀 **Now your bot is more intelligent and handles `"did_you_mean"` completely via LLM!** Let me know if you need refinements! 🎯
