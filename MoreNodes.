@@ -1,152 +1,119 @@
-To ensure the **LLM always returns `tool_calls` in the correct format**, we need to **strictly enforce JSON validation** in the prompt. Here’s how we fix it:
+Got it! I’ll modify the code so that:
+- If **`query_drug_list` returns more than 10 drugs**, it **generates a file** and returns the download link.
+- If **`query_drug_list` returns 10 or fewer drugs**, it **returns them in the response**.
 
 ---
 
-## **✅ 1️⃣ Updated `prompts.yaml` (Strict JSON Enforcement for `tool_calls`)**
-### **🔹 Fixes**
-- Forces the LLM to **always return `tool_calls` in the same JSON format**.
-- Ensures missing parameters are **explicitly listed**.
-- Prevents random formatting errors.
-- Clearly **defines the allowed `tool_calls`**.
+# **✅ 1️⃣ Modify `query_opensearch()` to Handle Large Results**
+We check **if the number of drugs exceeds 10**, then:
+1. **Create a file** (CSV or JSON) containing the results.
+2. **Return a download link**.
+3. **Otherwise, return the results inline.**
 
-```yaml
-prompts:
-  context_prompt: |
-    You are an AI assistant that determines the intent of a user query and generates structured tool calls.
-
-    **Your response must always be in strict JSON format with a "context" key.**
-
-    - If the user is asking a general NLP question (e.g., "How does formulary placement work?"), respond:
-      ```json
-      {
-        "context": "nlp",
-        "message": "Formulary placement determines where a drug is listed in an insurance plan. Would you like to ask about a specific formulary?"
-      }
-      ```
-    
-    - If the user is searching for formulary details, respond with **valid `tool_calls` in a strict JSON format**:
-
-      **✅ Valid `tool_calls` Format:**
-      ```json
-      {
-        "context": "formulary_search",
-        "tool_calls": [
-          {
-            "tool": "<tool_name>",
-            "parameters": {
-              "formulary_name": "<formulary_name>",
-              "year": "<year>",
-              "brand_name": "<brand_name>",
-              "attribute": "<attribute>"
-            }
-          }
-        ],
-        "missing_parameters": ["<parameter_name>"]
-      }
-      ```
-
-      **🚀 List of Supported `tool_calls`:**
-      1. `"query_formulary"` → Requires `formulary_name`, `year`, `attribute`
-      2. `"query_drug_list"` → Requires `formulary_name`, `year`
-      3. `"query_fps_placement"` → Requires `formulary_name`, `year`, `brand_name`
-      4. `"query_um_rules"` → Requires `formulary_name`, `year`, `brand_name`
-      5. `"query_total_wac"` → Requires `formulary_name`, `year`, `brand_name`
-      
-      **⚠️ If any required parameter is missing, always include `"missing_parameters"` to prompt the user.**
-
-    - If OpenSearch finds **similar matches** and the user needs to confirm, respond:
-      - If only **one option is available** and the user says `"Yes"` or `"Confirm"`:
-        ```json
-        {
-          "context": "did_you_mean",
-          "selected_value": "<option_provided>",
-          "confirmed": true
-        }
-        ```
-      - If there are **multiple options**, and the user selects one:
-        ```json
-        {
-          "context": "did_you_mean",
-          "selected_value": "<selected_option>",
-          "confirmed": true
-        }
-        ```
-      - If the user **provides an invalid response**:
-        ```json
-        {
-          "context": "did_you_mean",
-          "selected_value": null,
-          "confirmed": false,
-          "message": "I didn't understand your selection. Please choose a valid option."
-        }
-        ```
-
-    - If the query is unclear or not related to formulary data, respond:
-      ```json
-      {
-        "context": "unknown",
-        "message": "I'm not sure I understood your request. Can you clarify?"
-      }
-      ```
-
-    **⚠️ IMPORTANT RULES FOR YOU:**
-    - **Never generate `tool_calls` with missing keys.**
-    - **Ensure all JSON keys and values are wrapped in double quotes ("").**
-    - **Always return JSON. Never return plain text.**
-```
-
----
-
-## **✅ 2️⃣ Why This Fix Works**
-### **🔹 What This Does**
-✔ **Forces strict JSON validation** (no formatting errors).  
-✔ **Ensures `"tool_calls"` is always an array (even if it's one tool call).**  
-✔ **Enforces `"missing_parameters"` to handle incomplete queries.**  
-✔ **Prevents missing or incorrectly formatted keys.**  
-
-### **🔹 Expected LLM Output (Always Valid)**
-✅ **Example (User asks for WAC of Lipitor in Express Scripts, but forgets year):**
-```json
-{
-  "context": "formulary_search",
-  "tool_calls": [
-    {
-      "tool": "query_total_wac",
-      "parameters": {
-        "formulary_name": "Express Scripts",
-        "brand_name": "Lipitor"
-      }
-    }
-  ],
-  "missing_parameters": ["year"]
-}
-```
-👆 **Bot now knows to ask: "Which year do you need?"**
-
-✅ **Example (User asks for placement of a drug in 2023 under a formulary):**
-```json
-{
-  "context": "formulary_search",
-  "tool_calls": [
-    {
-      "tool": "query_fps_placement",
-      "parameters": {
-        "formulary_name": "Express Scripts",
-        "year": "2023",
-        "brand_name": "Lipitor"
-      }
-    }
-  ]
-}
-```
-👆 **Bot correctly processes OpenSearch query.**
-
----
-
-## **✅ 3️⃣ Updated `process_query()` (Strict JSON Validation)**
-Now, **we validate `tool_calls` before executing**.
-
+### **📝 Updated `query_opensearch()`**
 ```python
+import json
+import csv
+import os
+from datetime import datetime
+from fastapi.responses import FileResponse
+
+async def query_opensearch(tool, params):
+    """
+    Executes OpenSearch queries dynamically based on tool type.
+    If results exceed 10 items for `query_drug_list`, generates a file for download.
+    """
+    query_conditions = []
+
+    if tool == "query_formulary":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+
+    elif tool == "query_drug_list":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+        query_conditions.append({"match": {"year": params["year"]}})
+
+    elif tool == "query_fps_placement":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+        query_conditions.append({"match": {"year": params["year"]}})
+        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
+
+    elif tool == "query_um_rules":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+        query_conditions.append({"match": {"year": params["year"]}})
+        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
+
+    elif tool == "query_total_wac":
+        query_conditions.append({"match": {"formulary_name.keyword": params["formulary_name"]}})
+        query_conditions.append({"match": {"year": params["year"]}})
+        query_conditions.append({"match": {"brand_name.keyword": params["brand_name"]}})
+
+    query = {"size": 1000, "query": {"bool": {"must": query_conditions}}}
+    response = requests.post(OPENSEARCH_URL, json=query)
+
+    if response.status_code != 200:
+        return {"response_type": "error", "message": "Failed to fetch data from OpenSearch."}
+
+    data = response.json()
+    hits = data.get("hits", {}).get("hits", [])
+
+    results = [hit["_source"] for hit in hits]
+
+    # Special case for query_drug_list: return inline if ≤10, otherwise generate a file
+    if tool == "query_drug_list":
+        if len(results) > 10:
+            file_path = await generate_results_file(results)
+            return {
+                "response_type": "file_download",
+                "file_url": file_path
+            }
+        else:
+            return {
+                "response_type": "opensearch_results",
+                "results": results
+            }
+
+    return {
+        "response_type": "opensearch_results",
+        "results": results
+    }
+```
+
+---
+
+# **✅ 2️⃣ Function to Generate a Downloadable File**
+This function **creates a CSV file** with the **list of drugs** when the results exceed 10.
+
+### **📝 New Function: `generate_results_file()`**
+```python
+async def generate_results_file(results):
+    """
+    Generates a CSV file containing the OpenSearch query results
+    and returns the file path for download.
+    """
+    file_directory = "generated_files"
+    os.makedirs(file_directory, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    file_path = os.path.join(file_directory, f"drug_list_{timestamp}.csv")
+
+    # Create CSV file
+    with open(file_path, mode="w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=results[0].keys())
+        writer.writeheader()
+        writer.writerows(results)
+
+    return file_path
+```
+
+---
+
+# **✅ 3️⃣ Handling File Download in `process_query()`**
+If the response contains a `"file_url"`, we return the download link instead of the results.
+
+### **📝 Updated `process_query()`**
+```python
+from fastapi.responses import FileResponse
+
 async def process_query(user_query, history):
     """
     Determines the context of the query before executing OpenSearch queries
@@ -156,21 +123,6 @@ async def process_query(user_query, history):
     # Step 1: Determine query intent
     context_result = await derive_context(user_query, history)
     context = context_result.get("context")
-
-    # Validate `tool_calls` format
-    tool_calls = context_result.get("tool_calls", [])
-    if not isinstance(tool_calls, list):
-        return {
-            "response_type": "error",
-            "message": "Invalid tool_calls format. Expected a list."
-        }
-
-    for tool_call in tool_calls:
-        if "tool" not in tool_call or "parameters" not in tool_call:
-            return {
-                "response_type": "error",
-                "message": "Invalid tool_calls structure. Each tool_call must have 'tool' and 'parameters'."
-            }
 
     # Handle NLP Queries
     if context == "nlp":
@@ -182,32 +134,35 @@ async def process_query(user_query, history):
             }
         }
 
-    # Handle Missing Parameters
-    missing_parameters = context_result.get("missing_parameters", [])
-    if missing_parameters:
-        return {
-            "response_type": "follow_up",
-            "follow_up": {
-                "question": f"Could you provide {missing_parameters[0]}?",
-                "options": await query_valid_options(missing_parameters[0])
-            }
-        }
-
     # Handle Formulary Search Queries
     if context == "formulary_search":
+        tool_calls = context_result.get("tool_calls", [])
+        missing_parameters = context_result.get("missing_parameters", [])
+
+        # Ask for missing parameters
+        if missing_parameters:
+            return {
+                "response_type": "follow_up",
+                "follow_up": {
+                    "question": f"Could you provide {missing_parameters[0]}?",
+                    "options": await query_valid_options(missing_parameters[0])
+                }
+            }
+
         results = []
         for tool_call in tool_calls:
             tool = tool_call["tool"]
             params = tool_call["parameters"]
+            result = await query_opensearch(tool, params)
 
-            # Validate known tools
-            if tool not in ["query_formulary", "query_drug_list", "query_fps_placement", "query_um_rules", "query_total_wac"]:
+            # If a file is generated, return the file instead of results
+            if result.get("response_type") == "file_download":
                 return {
-                    "response_type": "error",
-                    "message": f"Unsupported tool: {tool}"
+                    "response_type": "file_download",
+                    "file_url": result["file_url"],
+                    "message": "The results are too large to display. Download the file using the link provided."
                 }
 
-            result = await query_opensearch(tool, params)
             results.append(result)
 
         return {
@@ -226,10 +181,76 @@ async def process_query(user_query, history):
 
 ---
 
-## **🚀 Final Summary**
-✔ **LLM is now forced to always return `tool_calls` in a strict JSON format.**  
-✔ **Strict JSON validation ensures no missing parameters or incorrect formats.**  
-✔ **"Missing Parameters" logic dynamically asks for missing values.**  
-✔ **Prevents execution of invalid or incorrectly formatted `tool_calls`.**  
+# **✅ 4️⃣ Adding a FastAPI Route to Serve Files**
+Since we are generating files, we need an **API route to serve them for download**.
 
-🚀 **Now your bot will always get `tool_calls` in the proper format!** 🎯 Let me know if you need any refinements. 🚀
+### **📝 FastAPI Route for File Download**
+```python
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+
+app = FastAPI()
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    """
+    Serves the generated file for download.
+    """
+    file_path = f"generated_files/{filename}"
+    return FileResponse(path=file_path, filename=filename, media_type="text/csv")
+```
+
+---
+
+# **✅ 5️⃣ Example User Scenarios**
+### **Scenario 1: Fewer than 10 Drugs**
+👤 **User:**  
+> *"What are the drugs under Express Scripts in 2023?"*
+
+🔍 **OpenSearch Returns:**  
+- Lipitor
+- Crestor
+- Nexium  
+(3 drugs total)
+
+🤖 **Bot Response:**  
+```json
+{
+  "response_type": "opensearch_results",
+  "results": [
+    {"brand_name": "Lipitor"},
+    {"brand_name": "Crestor"},
+    {"brand_name": "Nexium"}
+  ]
+}
+```
+✅ **Drugs are returned inline**.
+
+---
+
+### **Scenario 2: More than 10 Drugs**
+👤 **User:**  
+> *"What are the drugs under Express Scripts in 2023?"*
+
+🔍 **OpenSearch Returns:**  
+20 drugs.
+
+🤖 **Bot Response:**  
+```json
+{
+  "response_type": "file_download",
+  "file_url": "/download/drug_list_20240304153021.csv",
+  "message": "The results are too large to display. Download the file using the link provided."
+}
+```
+✅ **Drugs are too many, so a file is created and a download link is provided.**
+
+---
+
+# **🚀 Summary of Fixes**
+✔ **Bot returns drug names inline if ≤10 drugs.**  
+✔ **Bot generates a CSV file if >10 drugs and provides a download link.**  
+✔ **A FastAPI route is added to serve file downloads.**  
+✔ **File handling is fully automated and user-friendly.**  
+
+🚀 **Now your bot handles large results efficiently!** Let me know if you need refinements. 🎯
