@@ -1,177 +1,33 @@
-Got it! You need to **modify `routes.py`** to handle **`opensearch_results`**, and:
-1. **If results contain only one item**, pass it to **LLM for conversion into a natural language (NLP) response**.
-2. **Otherwise, return the list of results as usual**.
+import json
+import re
+import logging
 
----
+logger = logging.getLogger(__name__)
 
-## **✅ Updated `routes.py` to Handle `opensearch_results`**
-### **🔹 What This Does**
-- Checks if the **response contains `opensearch_results`**.
-- If **only one result exists**, it:
-  - **Calls LLM** to convert the result into an **NLP response**.
-  - **Returns a human-friendly message** instead of a JSON list.
-- If **more than one result exists**, it **returns the list as is**.
+def process_query(user_query, history):
+    """ Calls Azure OpenAI and detects if a report needs to be generated. """
+    messages = [
+        {"role": "system", "content": prompts["prompts"]["initial_prompt"]}
+    ] + [{"role": msg["role"], "content": str(msg["content"])} for msg in history] + \
+        [{"role": "user", "content": user_query}]
 
----
-
-### **📝 Updated Code**
-```python
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
-from services.ai_gateway import process_query, format_response_with_llm
-
-app = FastAPI()
-
-@app.post("/chat/{conversation_id}")
-async def ask_bot(conversation_id: str, request: dict):
-    """
-    Processes AI response and executes `tool_calls` dynamically.
-    """
-    user_query = request.get("query", "")
-    conversation_history = request.get("history", [])
-
-    # 🔹 Step 1: Process User Query
-    ai_response = await process_query(user_query, conversation_history)
-    
-    # 🔹 Step 2: Handle Different Response Types
-    if ai_response.get("response_type") == "file_download":
-        return ai_response  # File download response
-
-    elif ai_response.get("response_type") == "did_you_mean":
-        return ai_response  # "Did You Mean" handling
-
-    elif ai_response.get("response_type") == "follow_up":
-        return ai_response  # Follow-up question handling
-
-    elif ai_response.get("response_type") == "message":
-        return ai_response  # Direct NLP response
-
-    elif ai_response.get("response_type") == "opensearch_results":
-        results = ai_response.get("results", [])
-
-        # 🔹 Step 3: If only one result, convert it to NLP
-        if len(results) == 1:
-            formatted_response = await format_response_with_llm(results[0], conversation_history)
-            return {
-                "response_type": "message",
-                "message": formatted_response
-            }
-
-        # 🔹 Step 4: If multiple results, return as a list
-        return {
-            "response_type": "opensearch_results",
-            "results": results
-        }
-
-    return {
-        "response_type": "error",
-        "message": "I couldn't determine your request. Please clarify."
-    }
-```
-
----
-
-## **✅ How This Works**
-### **🔹 Scenario 1: Single Result → Convert to NLP**
-👤 **User Input:**  
-> *"What is the WAC for Lipitor under Express Scripts in 2023?"*
-
-🔍 **OpenSearch Returns:**
-```json
-{
-  "response_type": "opensearch_results",
-  "results": [
-    {"brand_name": "Lipitor", "total_wac": "$500"}
-  ]
-}
-```
-🤖 **Bot Calls LLM → Converts to Natural Language**  
-```json
-{
-  "response_type": "message",
-  "message": "The wholesale acquisition cost (WAC) for Lipitor under Express Scripts in 2023 is $500."
-}
-```
-✅ **User gets a friendly response instead of raw JSON!**
-
----
-
-### **🔹 Scenario 2: Multiple Results → Return as List**
-👤 **User Input:**  
-> *"What are the drugs under Express Scripts in 2023?"*
-
-🔍 **OpenSearch Returns:**
-```json
-{
-  "response_type": "opensearch_results",
-  "results": [
-    {"brand_name": "Lipitor"},
-    {"brand_name": "Crestor"},
-    {"brand_name": "Nexium"}
-  ]
-}
-```
-🤖 **Bot Response (No NLP Needed)**
-```json
-{
-  "response_type": "opensearch_results",
-  "results": [
-    {"brand_name": "Lipitor"},
-    {"brand_name": "Crestor"},
-    {"brand_name": "Nexium"}
-  ]
-}
-```
-✅ **Since there are multiple drugs, bot returns them as a list.**
-
----
-
-### **🔹 Scenario 3: File Download When More Than 10 Results**
-👤 **User Input:**  
-> *"What are the drugs under Express Scripts in 2023?"*
-
-🔍 **OpenSearch Returns (25 drugs).**  
-🤖 **Bot Response:**  
-```json
-{
-  "response_type": "file_download",
-  "file_url": "/download/drug_list_20240304153021.csv",
-  "message": "The results are too large to display. Download the file using the link provided."
-}
-```
-✅ **Bot automatically provides a download link instead of flooding chat with too many results.**
-
----
-
-## **✅ `format_response_with_llm()` Converts Single Result to NLP**
-We need a function to convert **a single JSON result into a natural language response**.
-
-```python
-async def format_response_with_llm(single_result, history):
-    """
-    Calls LLM to convert a structured OpenSearch result into a user-friendly response.
-    """
-    prompt = f"Convert this data into a clear response: {single_result}"
-    
-    # 🔹 Call LLM for natural language formatting
-    response = await ai_gateway.chat_completions.create(
-        model="ai-coe-gpt4-8k-analyze",
-        messages=[
-            {"role": "system", "content": "Convert structured data into a natural language response."},
-            {"role": "user", "content": prompt}
-        ],
+    response = azure_openai.chat.completions.create(
+        model=AZURE_OPENAI_DEPLOYMENT_NAME,
+        messages=messages,
         temperature=0.7
     )
 
-    return response.choices[0].message.content  # ✅ Return the NLP response
-```
+    ai_response = response.choices[0].message.content
+    logger.info(f"Raw AI response: {ai_response}")
 
----
+    # ✅ Step 1: Ensure the response is enclosed in valid JSON format
+    ai_response = ai_response.strip()
 
-## **🚀 Final Summary**
-✔ **Bot now detects if `opensearch_results` contain only one item and converts it into NLP.**  
-✔ **Multiple results are returned as a list.**  
-✔ **More than 10 results trigger file download.**  
-✔ **NLP responses use LLM to ensure user-friendly messaging.**  
-
-🚀 **Now your bot is fully optimized for structured + NLP responses!** Let me know if you need any refinements. 🎯
+    # ✅ Step 2: Convert single quotes to double quotes while keeping JSON structure intact
+    try:
+        ai_response = re.sub(r"(?<!\\)'", "\"", ai_response)  # Replace only unescaped single quotes
+        parsed_response = json.loads(ai_response)  # Attempt JSON parsing
+        return parsed_response
+    except json.JSONDecodeError:
+        logger.error(f"AI response is not in valid JSON format: {ai_response}")
+        return {"response": "Error processing AI response. Please try again."}
