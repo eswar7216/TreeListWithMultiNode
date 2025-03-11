@@ -181,3 +181,21 @@ const ChatBot: React.FC = () => {
 };
 
 export default ChatBot;
+
+
+
+export const useStyles = makeStyles({
+  downloadButton: {
+    marginTop: "8px",
+    background: "#28a745",
+    color: "white",
+    padding: "6px 12px",
+    borderRadius: "8px",
+    border: "none",
+    cursor: "pointer",
+    fontSize: "14px",
+    "&:hover": {
+      background: "#218838",
+    },
+  },
+});
