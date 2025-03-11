@@ -17,41 +17,62 @@ prompts:
        "query_category": "{general|structured|report}",
        "tool_calls": [
          {
-           "tool": "{query_type}",
+           "tool": "generate_custom_report",
            "parameters": {
-             {parameters}
+             "report_type": "{custom}",
+             "filters": {
+               "{key1}": "{value1}",
+               "{key2}": "{value2}"
+             }
            }
          }
        ]
      }
      ```
      - `query_category`: Specifies if the request is **general**, **structured (tool call required)**, or **report-based**.
-     - `{query_type}`: Specifies the API/tool to call.
-     - `{parameters}`: A dynamic key-value map based on the query type.
+     - `report_type`: Extracted dynamically from the user query.
+     - `filters`: Extracted conditions like **placement, drug category, formulary name, year, etc.**
  
-     ### Query Classification Rules:
-     - **General Queries** (query_category = `general`):
-       - User asks general questions about formulary concepts.
-       - Example: "What is a formulary?" → Answer in **natural language**.
-     - **Structured Queries** (query_category = `structured`):
-       - If the query fits a known pattern, return **tool_calls JSON**.
-       - Example: "What drugs are under Formulary A?" → Returns JSON response with `query_drug_list_for_formulary`.
-     - **Report Requests** (query_category = `report`):
-       - If the user asks to **generate a report**, categorize it as `report` and include relevant parameters.
-       - Example: "Generate a report of formulary placements for 2023" → Identify and structure the request.
- 
-     ### Supported Queries & Parameters:
-     Instead of repeating JSON structures, use these patterns to dynamically generate the appropriate tool call:
- 
-     | Query | Query Type | Required Parameters | Category |
-     |-------|-----------|---------------------|----------|
-     | Retrieve formularies for a manufacturer | `query_formulary_list_for_manufacturer` | `attribute: {formulary_name}` | structured |
-     | List drugs under a formulary | `query_drug_list_for_formulary` | `attribute: {brand_name}` | structured |
-     | Retrieve drug placement | `query_fps_placement` | `formulary_name, year, brand_name, attribute: {grid_cell_type}` | structured |
-     | Retrieve WAC cost | `query_total_wac` | `formulary_name, year, brand_name, attribute: {total_wac}` | structured |
-     | Retrieve total claims | `query_total_claims` | `formulary_name, year, brand_name, attribute: {total_claims}` | structured |
-     | Generate formulary placement report | `generate_formulary_report` | `formulary_name, year` | report |
-     | Generate WAC cost report | `generate_wac_report` | `formulary_name, year` | report |
+     ### Report Handling Rules:
+     - If a user asks to **generate a report**, categorize it as `report` and extract all relevant filters.
+     - Example Queries:
+       - "Generate a report of all drugs in preferred placement under a formulary"
+         ```json
+         {
+           "query_category": "report",
+           "tool_calls": [
+             {
+               "tool": "generate_custom_report",
+               "parameters": {
+                 "report_type": "drugs_by_placement",
+                 "filters": {
+                   "placement": "preferred",
+                   "formulary_name": "{formulary_name}"
+                 }
+               }
+             }
+           ]
+         }
+         ```
+       - "Generate a report of all drugs in closed category under formulary X for 2024"
+         ```json
+         {
+           "query_category": "report",
+           "tool_calls": [
+             {
+               "tool": "generate_custom_report",
+               "parameters": {
+                 "report_type": "drugs_by_category",
+                 "filters": {
+                   "placement": "closed",
+                   "formulary_name": "Formulary X",
+                   "year": 2024
+                 }
+               }
+             }
+           ]
+         }
+         ```
  
      ### JSON Formatting Rules:
      ✔ Always return **valid JSON objects**.  
@@ -60,12 +81,16 @@ prompts:
      ❌ Do **not** return Python-style dictionaries (`'single quotes'`).  
      ❌ Respond with **either JSON or natural language, not both**.
  
-     ### Customization & Expansion:
-     - This format allows **dynamic generation** of tool calls without repeating similar structures.
-     - New queries can be added by defining `{query_type}` and `{parameters}`.
-     - It ensures **efficient token usage** while maintaining structured and valid JSON responses.
- 
      ### Final Notes:
-     - This structure eliminates redundancy and saves tokens.
-     - It ensures **scalability and flexibility**.
-     - JSON responses remain **consistent and valid** while allowing **natural language responses when required**.
+     - **Fully dynamic**: No hardcoded report types.
+     - **Scalable**: Supports any future report request.
+     - **More flexibility**: Extracts **filters** dynamically.
+
+---
+
+### **Next Steps**
+1. **Modify LLM processing in the bot to handle `generate_custom_report`.**
+2. **Update OpenSearch Query Execution to apply filters dynamically.**
+3. **Enhance Report Generation to support CSV/PDF formats.**
+
+Would you like me to proceed with these modifications in your **Python backend**? 🚀
