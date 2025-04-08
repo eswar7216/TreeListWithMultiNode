@@ -1,33 +1,22 @@
-import json
-import re
-import logging
+Sure! Here's a summarized version that directly answers the question in a concise and impactful way:
 
-logger = logging.getLogger(__name__)
+---
 
-def process_query(user_query, history):
-    """ Calls Azure OpenAI and detects if a report needs to be generated. """
-    messages = [
-        {"role": "system", "content": prompts["prompts"]["initial_prompt"]}
-    ] + [{"role": msg["role"], "content": str(msg["content"])} for msg in history] + \
-        [{"role": "user", "content": user_query}]
+**Use Case and Associated Value:**
 
-    response = azure_openai.chat.completions.create(
-        model=AZURE_OPENAI_DEPLOYMENT_NAME,
-        messages=messages,
-        temperature=0.7
-    )
+We are proposing an **AI-powered intent detection system** to support the Ascent Webex support team. Today, when users face issues such as login failures, password resets, or missing welcome emails, Ascent support managers reach out manually. Each request currently takes **2–3 hours** of PSO or developer time to investigate and resolve using logs and manual checks.
 
-    ai_response = response.choices[0].message.content
-    logger.info(f"Raw AI response: {ai_response}")
+With this AI solution, we will automatically **identify the intent** of incoming support requests and provide **recommended actions or auto-resolution workflows**, reducing manual effort and resolution time.
 
-    # ✅ Step 1: Ensure the response is enclosed in valid JSON format
-    ai_response = ai_response.strip()
+### **Value:**
+- **Time Savings:** For 30–50 support requests per month, saving ~2 hours per request = **60–100 hours/month** saved.
+- **Cost Savings:** At an average fully loaded rate of $100/hour, estimated **$6,000–$10,000/month** in productivity savings.
+- **Speed to Resolution:** Issues that previously took hours can now be triaged in **minutes**, improving end-user experience.
+- **Developer Efficiency:** Reduces unplanned dev time spent on support, allowing more focus on delivery and innovation.
+- **Scalability:** Supports future growth in user base without linear increase in support resources.
 
-    # ✅ Step 2: Convert single quotes to double quotes while keeping JSON structure intact
-    try:
-        ai_response = re.sub(r"(?<!\\)'", "\"", ai_response)  # Replace only unescaped single quotes
-        parsed_response = json.loads(ai_response)  # Attempt JSON parsing
-        return parsed_response
-    except json.JSONDecodeError:
-        logger.error(f"AI response is not in valid JSON format: {ai_response}")
-        return {"response": "Error processing AI response. Please try again."}
+This AI use case delivers **tangible cost savings, faster resolution times, and increased developer capacity**, all contributing to higher customer satisfaction and operational efficiency.
+
+--- 
+
+Let me know if you want to tailor this for an intake form, slide, or leadership email.
