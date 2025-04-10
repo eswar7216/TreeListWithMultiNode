@@ -1,22 +1,180 @@
-Sure! Here's a summarized version that directly answers the question in a concise and impactful way:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Python Clean Code & venv Presentation</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      padding: 2rem;
+      background-color: #fdfdfd;
+      color: #333;
+    }
+    h1, h2 {
+      color: #2c3e50;
+    }
+    .slide {
+      margin-bottom: 4rem;
+      border-bottom: 2px solid #ddd;
+      padding-bottom: 2rem;
+    }
+    .subtitle {
+      font-style: italic;
+      color: #888;
+      margin-top: 0.25rem;
+    }
+    ul {
+      margin-top: 0.5rem;
+    }
+    .code-block {
+      background-color: #f4f4f4;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-family: monospace;
+      margin: 0.5rem 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Write Python Like a Pro: Clean Code & Virtual Environments</h1>
+  <div class="slide">
+    <h2>1. Icebreaker Poll</h2>
+    <p>How would you rate your Python experience?</p>
+    <ul>
+      <li>🐍 Beginner</li>
+      <li>🧑‍\U0001F4BB Intermediate</li>
+      <li>🧙 Advanced</li>
+    </ul>
+    <p class="subtitle">Don't worry, there's no snake handling required. 🐍</p>
+  </div>
 
----
+  <div class="slide">
+    <h2>2. Agenda</h2>
+    <ul>
+      <li>Why Python?</li>
+      <li>Clean Code Principles</li>
+      <li>Python Coding Standards</li>
+      <li>Virtual Environments (venv)</li>
+      <li>Live Demo & Quiz</li>
+    </ul>
+  </div>
 
-**Use Case and Associated Value:**
+  <div class="slide">
+    <h2>3. Why Python?</h2>
+    <ul>
+      <li>Easy to learn, versatile, powerful</li>
+      <li>Used in data science, web development, automation, etc.</li>
+      <li>Huge ecosystem (Flask, Django, Pandas, etc.)</li>
+    </ul>
+    <p>Ask the audience: What's your favorite thing about Python?</p>
+  </div>
 
-We are proposing an **AI-powered intent detection system** to support the Ascent Webex support team. Today, when users face issues such as login failures, password resets, or missing welcome emails, Ascent support managers reach out manually. Each request currently takes **2–3 hours** of PSO or developer time to investigate and resolve using logs and manual checks.
+  <div class="slide">
+    <h2>4. What is Clean Code?</h2>
+    <ul>
+      <li>Readable</li>
+      <li>Maintainable</li>
+      <li>Testable</li>
+      <li>Consistent style</li>
+    </ul>
+    <p class="subtitle">So your future self doesn't travel back in time to slap you. 😅</p>
+  </div>
 
-With this AI solution, we will automatically **identify the intent** of incoming support requests and provide **recommended actions or auto-resolution workflows**, reducing manual effort and resolution time.
+  <div class="slide">
+    <h2>5. Clean Code Principles</h2>
+    <ul>
+      <li>Meaningful names: <code>user_list</code> ✅ vs <code>ul</code> ❌</li>
+      <li>Small functions: do one thing only</li>
+      <li>DRY: Don't Repeat Yourself</li>
+      <li>Self-explanatory code > comments</li>
+      <li>Use built-ins and list comprehensions</li>
+    </ul>
+    <p class="subtitle">"def doEverything(): pass" is technically legal... but morally questionable.</p>
+  </div>
 
-### **Value:**
-- **Time Savings:** For 30–50 support requests per month, saving ~2 hours per request = **60–100 hours/month** saved.
-- **Cost Savings:** At an average fully loaded rate of $100/hour, estimated **$6,000–$10,000/month** in productivity savings.
-- **Speed to Resolution:** Issues that previously took hours can now be triaged in **minutes**, improving end-user experience.
-- **Developer Efficiency:** Reduces unplanned dev time spent on support, allowing more focus on delivery and innovation.
-- **Scalability:** Supports future growth in user base without linear increase in support resources.
+  <div class="slide">
+    <h2>6. Anti-Patterns to Avoid</h2>
+    <ul>
+      <li>Long functions</li>
+      <li>Global variables</li>
+      <li>Magic numbers (use constants)</li>
+      <li>Catching broad exceptions (e.g., <code>except:</code>) ❌</li>
+    </ul>
+    <p class="subtitle">Global variables are like glitter — once you use them, they're everywhere forever. ✨</p>
+  </div>
 
-This AI use case delivers **tangible cost savings, faster resolution times, and increased developer capacity**, all contributing to higher customer satisfaction and operational efficiency.
+  <div class="slide">
+    <h2>7. What is a Virtual Environment?</h2>
+    <ul>
+      <li>A self-contained Python directory with its own libraries</li>
+      <li>Why use it?
+        <ul>
+          <li>Avoid dependency conflicts</li>
+          <li>Isolate project requirements</li>
+          <li>Replicate environments easily</li>
+        </ul>
+      </li>
+    </ul>
+    <p class="subtitle">Think of venv like a bubble — a safe space for your dependencies. 🎈</p>
+  </div>
 
---- 
+  <div class="slide">
+    <h2>8. venv in Action</h2>
+    <div class="code-block">
+      python -m venv venv<br>
+      venv\Scripts\activate  (Windows)<br>
+      source venv/bin/activate  (Mac/Linux)<br><br>
+      pip install requests<br>
+      pip freeze &gt; requirements.txt
+    </div>
+  </div>
 
-Let me know if you want to tailor this for an intake form, slide, or leadership email.
+  <div class="slide">
+    <h2>9. Live Coding Demo</h2>
+    <ul>
+      <li>Show an app that:</li>
+      <li>Uses virtual environment</li>
+      <li>Follows clean code structure</li>
+      <li>Fetches data or prints output</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h2>10. Quiz Time</h2>
+    <ul>
+      <li>What does venv do?</li>
+      <li>What's wrong with this code?<br><code>def calc(x): return x+1; print(calc(2))</code></li>
+      <li>Is this clean code?<br><code>a = 10; b = 20; c = a + b</code></li>
+    </ul>
+    <p class="subtitle">Let's play: 'Who Wants to Avoid a Bug?' 💸</p>
+  </div>
+
+  <div class="slide">
+    <h2>11. Q&A</h2>
+    <p>Ask your questions! Let's discuss real-world issues, doubts, and best practices.</p>
+  </div>
+
+  <div class="slide">
+    <h2>12. Key Takeaways</h2>
+    <ul>
+      <li>Clean code = better dev and better team</li>
+      <li>Always use venv for projects</li>
+      <li>Follow PEP8, use linters and formatters</li>
+      <li>Build habits for long-term success</li>
+    </ul>
+  </div>
+
+  <div class="slide">
+    <h2>13. Resources</h2>
+    <ul>
+      <li><a href="https://peps.python.org/pep-0008/" target="_blank">PEP8 Style Guide</a></li>
+      <li><a href="https://realpython.com/" target="_blank">Real Python</a></li>
+      <li><a href="https://docs.python.org/3/library/venv.html" target="_blank">Python venv Guide</a></li>
+      <li>Tools: black, flake8, pytest, pip-tools</li>
+    </ul>
+  </div>
+</body>
+</html>
