@@ -1,4 +1,4 @@
-from utils.parser import parse_intent
+from services.ai_gateway import process_query
 from utils.confirmation_store import set_pending_action, get_pending_action, clear_pending_action
 from handlers.actions import check_user_active, resend_welcome_email, check_account_locked
 
@@ -23,16 +23,18 @@ def handle_message(user_text, user_id):
         else:
             return "🔁 Please reply with `yes` or `no` to confirm."
 
-    intent, entities = parse_intent(user_text)
+    parsed = process_query(user_text)
+    intent = parsed.get("intent")
+    parameters = parsed.get("parameters", {})
 
     if intent == "check_active":
-        set_pending_action(user_id, intent, entities)
-        return f"❓Do you want me to check if user `{entities['user_id']}` is active? Reply `yes` or `no`."
+        set_pending_action(user_id, intent, parameters)
+        return f"❓Do you want me to check if user `{parameters['user_id']}` is active? Reply `yes` or `no`."
     elif intent == "resend_email":
-        set_pending_action(user_id, intent, entities)
+        set_pending_action(user_id, intent, parameters)
         return "❓Do you want me to resend the welcome email? Reply `yes` or `no`."
     elif intent == "check_locked":
-        set_pending_action(user_id, intent, entities)
-        return f"❓Do you want me to check if user `{entities['user_id']}` is locked? Reply `yes` or `no`."
+        set_pending_action(user_id, intent, parameters)
+        return f"❓Do you want me to check if user `{parameters['user_id']}` is locked? Reply `yes` or `no`."
 
     return "❌ Sorry, I can only help with: user activity, welcome emails, and account lock checks."
