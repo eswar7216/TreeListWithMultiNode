@@ -1,4 +1,4 @@
-y# Webex Bot for Account Support
+hi y# Webex Bot for Account Support
 
 This bot handles a fixed set of user support tasks via Webex:
 
@@ -13,6 +13,9 @@ All actions require confirmation from the user before executing.
 pip install -r requirements.txt
 python webex_bot/main.py
 `
+
+In one of the most ambitious and collaborative technical efforts across our organization, our working group tackled the company-wide Evernorth rebranding by modernizing nearly 100 web applications under tight timelines and high complexity. The group set a gold standard for scalable design, client customization, and future-ready architecture.
+
 
 
 Short Description (for award form summary):
