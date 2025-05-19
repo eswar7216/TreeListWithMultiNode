@@ -1,180 +1,89 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Python Clean Code & venv Presentation</title>
-  <style>
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      line-height: 1.6;
-      margin: 0;
-      padding: 2rem;
-      background-color: #fdfdfd;
-      color: #333;
+from flask import Flask, request, jsonify
+from llm_utils import get_intent
+from webex_utils import get_message_text, reply_to_user
+from user_actions import check_user_status, resend_activation_email
+
+app = Flask(__name__)
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    payload = request.json
+    print("Received webhook:", payload)
+
+    if payload.get("actorId") == payload.get("createdBy"):
+        return jsonify({"status": "ignored"}), 200
+
+    message_id = payload.get("data", {}).get("id")
+    room_id = payload.get("data", {}).get("roomId")
+
+    if not message_id or not room_id:
+        return jsonify({"status": "invalid"}), 400
+
+    # Get the full message text
+    user_message = get_message_text(message_id)
+    print("User message:", user_message)
+
+    # Determine user intent
+    intent = get_intent(user_message)
+    print("Detected intent:", intent)
+
+    # Execute intent
+    if intent == "check_status":
+        response = check_user_status(user_message)
+    elif intent == "resend_activation":
+        response = resend_activation_email(user_message)
+    else:
+        response = "🤖 I'm not sure how to help with that. Please ask about user status or activation."
+
+    reply_to_user(room_id, response)
+    return jsonify({"status": "ok"}), 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+
+--------
+
+def get_intent(message: str) -> str:
+    message = message.lower()
+    if "active" in message or "status" in message:
+        return "check_status"
+    elif "resend" in message or "activation" in message:
+        return "resend_activation"
+    else:
+        return "unknown"
+
+
+---------
+import requests
+
+WEBEX_BOT_TOKEN = "<YOUR_WEBEX_BOT_TOKEN>"
+
+HEADERS = {
+    "Authorization": f"Bearer {WEBEX_BOT_TOKEN}",
+    "Content-Type": "application/json"
+}
+
+def get_message_text(message_id: str) -> str:
+    url = f"https://webexapis.com/v1/messages/{message_id}"
+    response = requests.get(url, headers=HEADERS)
+    if response.status_code == 200:
+        return response.json().get("text", "")
+    return ""
+
+def reply_to_user(room_id: str, message: str):
+    url = "https://webexapis.com/v1/messages"
+    payload = {
+        "roomId": room_id,
+        "text": message
     }
-    h1, h2 {
-      color: #2c3e50;
-    }
-    .slide {
-      margin-bottom: 4rem;
-      border-bottom: 2px solid #ddd;
-      padding-bottom: 2rem;
-    }
-    .subtitle {
-      font-style: italic;
-      color: #888;
-      margin-top: 0.25rem;
-    }
-    ul {
-      margin-top: 0.5rem;
-    }
-    .code-block {
-      background-color: #f4f4f4;
-      padding: 0.5rem 1rem;
-      border-radius: 6px;
-      font-family: monospace;
-      margin: 0.5rem 0;
-    }
-  </style>
-</head>
-<body>
-  <h1>Write Python Like a Pro: Clean Code & Virtual Environments</h1>
-  <div class="slide">
-    <h2>1. Icebreaker Poll</h2>
-    <p>How would you rate your Python experience?</p>
-    <ul>
-      <li>🐍 Beginner</li>
-      <li>🧑‍\U0001F4BB Intermediate</li>
-      <li>🧙 Advanced</li>
-    </ul>
-    <p class="subtitle">Don't worry, there's no snake handling required. 🐍</p>
-  </div>
+    requests.post(url, json=payload, headers=HEADERS)
 
-  <div class="slide">
-    <h2>2. Agenda</h2>
-    <ul>
-      <li>Why Python?</li>
-      <li>Clean Code Principles</li>
-      <li>Python Coding Standards</li>
-      <li>Virtual Environments (venv)</li>
-      <li>Live Demo & Quiz</li>
-    </ul>
-  </div>
+--------------
+def check_user_status(message: str) -> str:
+    # Simulated logic
+    return "✅ The user is currently active."
 
-  <div class="slide">
-    <h2>3. Why Python?</h2>
-    <ul>
-      <li>Easy to learn, versatile, powerful</li>
-      <li>Used in data science, web development, automation, etc.</li>
-      <li>Huge ecosystem (Flask, Django, Pandas, etc.)</li>
-    </ul>
-    <p>Ask the audience: What's your favorite thing about Python?</p>
-  </div>
+def resend_activation_email(message: str) -> str:
+    # Simulated logic
+    return "📧 Activation email has been resent to the user."
 
-  <div class="slide">
-    <h2>4. What is Clean Code?</h2>
-    <ul>
-      <li>Readable</li>
-      <li>Maintainable</li>
-      <li>Testable</li>
-      <li>Consistent style</li>
-    </ul>
-    <p class="subtitle">So your future self doesn't travel back in time to slap you. 😅</p>
-  </div>
-
-  <div class="slide">
-    <h2>5. Clean Code Principles</h2>
-    <ul>
-      <li>Meaningful names: <code>user_list</code> ✅ vs <code>ul</code> ❌</li>
-      <li>Small functions: do one thing only</li>
-      <li>DRY: Don't Repeat Yourself</li>
-      <li>Self-explanatory code > comments</li>
-      <li>Use built-ins and list comprehensions</li>
-    </ul>
-    <p class="subtitle">"def doEverything(): pass" is technically legal... but morally questionable.</p>
-  </div>
-
-  <div class="slide">
-    <h2>6. Anti-Patterns to Avoid</h2>
-    <ul>
-      <li>Long functions</li>
-      <li>Global variables</li>
-      <li>Magic numbers (use constants)</li>
-      <li>Catching broad exceptions (e.g., <code>except:</code>) ❌</li>
-    </ul>
-    <p class="subtitle">Global variables are like glitter — once you use them, they're everywhere forever. ✨</p>
-  </div>
-
-  <div class="slide">
-    <h2>7. What is a Virtual Environment?</h2>
-    <ul>
-      <li>A self-contained Python directory with its own libraries</li>
-      <li>Why use it?
-        <ul>
-          <li>Avoid dependency conflicts</li>
-          <li>Isolate project requirements</li>
-          <li>Replicate environments easily</li>
-        </ul>
-      </li>
-    </ul>
-    <p class="subtitle">Think of venv like a bubble — a safe space for your dependencies. 🎈</p>
-  </div>
-
-  <div class="slide">
-    <h2>8. venv in Action</h2>
-    <div class="code-block">
-      python -m venv venv<br>
-      venv\Scripts\activate  (Windows)<br>
-      source venv/bin/activate  (Mac/Linux)<br><br>
-      pip install requests<br>
-      pip freeze &gt; requirements.txt
-    </div>
-  </div>
-
-  <div class="slide">
-    <h2>9. Live Coding Demo</h2>
-    <ul>
-      <li>Show an app that:</li>
-      <li>Uses virtual environment</li>
-      <li>Follows clean code structure</li>
-      <li>Fetches data or prints output</li>
-    </ul>
-  </div>
-
-  <div class="slide">
-    <h2>10. Quiz Time</h2>
-    <ul>
-      <li>What does venv do?</li>
-      <li>What's wrong with this code?<br><code>def calc(x): return x+1; print(calc(2))</code></li>
-      <li>Is this clean code?<br><code>a = 10; b = 20; c = a + b</code></li>
-    </ul>
-    <p class="subtitle">Let's play: 'Who Wants to Avoid a Bug?' 💸</p>
-  </div>
-
-  <div class="slide">
-    <h2>11. Q&A</h2>
-    <p>Ask your questions! Let's discuss real-world issues, doubts, and best practices.</p>
-  </div>
-
-  <div class="slide">
-    <h2>12. Key Takeaways</h2>
-    <ul>
-      <li>Clean code = better dev and better team</li>
-      <li>Always use venv for projects</li>
-      <li>Follow PEP8, use linters and formatters</li>
-      <li>Build habits for long-term success</li>
-    </ul>
-  </div>
-
-  <div class="slide">
-    <h2>13. Resources</h2>
-    <ul>
-      <li><a href="https://peps.python.org/pep-0008/" target="_blank">PEP8 Style Guide</a></li>
-      <li><a href="https://realpython.com/" target="_blank">Real Python</a></li>
-      <li><a href="https://docs.python.org/3/library/venv.html" target="_blank">Python venv Guide</a></li>
-      <li>Tools: black, flake8, pytest, pip-tools</li>
-    </ul>
-  </div>
-</body>
-</html>
