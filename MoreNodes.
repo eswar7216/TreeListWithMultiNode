@@ -1,89 +1,177 @@
+To build a **Webex bot** that uses an **LLM to derive user intent** (such as checking user status or resending activation emails), and then **prompts for confirmation** before executing an action, here's a clean breakdown:
+
+---
+
+### 🧠 Capabilities:
+
+1. Use **LLM** (via your internal AI Gateway) to extract intent from user messages.
+2. Check if intent is one of:
+
+   * "check user active status"
+   * "resend welcome email"
+   * "check if user is account locked"
+3. Prompt user for confirmation.
+4. On confirmation, **perform action** (e.g., resend email).
+
+---
+
+### 🗂 Project Structure:
+
+```
+webex-bot/
+│
+├── main.py               # Entry point
+├── llm_utils.py          # Calls LLM and parses intent
+├── webex_handler.py      # Webhook processing
+├── actions.py            # Actual logic to perform actions
+└── state_store.py        # To temporarily hold confirmation state
+```
+
+---
+
+### ✅ `main.py`
+
+```python
 from flask import Flask, request, jsonify
-from llm_utils import get_intent
-from webex_utils import get_message_text, reply_to_user
-from user_actions import check_user_status, resend_activation_email
+from webex_handler import handle_webhook
 
 app = Flask(__name__)
 
-@app.route("/webhook", methods=["POST"])
+@app.route('/webex', methods=['POST'])
 def webhook():
-    payload = request.json
-    print("Received webhook:", payload)
+    return handle_webhook(request.json)
 
-    if payload.get("actorId") == payload.get("createdBy"):
-        return jsonify({"status": "ignored"}), 200
+if __name__ == '__main__':
+    app.run(port=5000)
+```
 
-    message_id = payload.get("data", {}).get("id")
-    room_id = payload.get("data", {}).get("roomId")
+---
 
-    if not message_id or not room_id:
-        return jsonify({"status": "invalid"}), 400
+### 🤖 `webex_handler.py`
 
-    # Get the full message text
-    user_message = get_message_text(message_id)
-    print("User message:", user_message)
+```python
+from llm_utils import get_intent
+from actions import check_user_status, resend_email, is_user_locked
+from state_store import store_confirmation, retrieve_confirmation
+from webexteamssdk import WebexTeamsAPI
 
-    # Determine user intent
-    intent = get_intent(user_message)
-    print("Detected intent:", intent)
+api = WebexTeamsAPI()
 
-    # Execute intent
-    if intent == "check_status":
-        response = check_user_status(user_message)
-    elif intent == "resend_activation":
-        response = resend_activation_email(user_message)
+def send_message(person_id, text):
+    api.messages.create(toPersonId=person_id, text=text)
+
+def handle_webhook(payload):
+    message_id = payload['data']['id']
+    user_id = payload['data']['personId']
+    msg = api.messages.get(message_id).text.strip()
+
+    # Check if we are awaiting confirmation
+    confirmation = retrieve_confirmation(user_id)
+    if confirmation and msg.lower() in ['yes', 'y']:
+        intent = confirmation['intent']
+        target_user = confirmation['target_user']
+        
+        if intent == 'check_active':
+            response = check_user_status(target_user)
+        elif intent == 'resend_email':
+            response = resend_email(target_user)
+        elif intent == 'check_locked':
+            response = is_user_locked(target_user)
+        else:
+            response = "Sorry, I don't recognize that action."
+
+        send_message(user_id, response)
+        return "Action confirmed", 200
+
+    # Else, process normally
+    intent, target_user = get_intent(msg)
+    if intent:
+        store_confirmation(user_id, intent, target_user)
+        send_message(user_id, f"Do you want me to proceed with `{intent.replace('_', ' ')}` for user `{target_user}`? Reply YES to confirm.")
     else:
-        response = "🤖 I'm not sure how to help with that. Please ask about user status or activation."
+        send_message(user_id, "Sorry, I couldn't understand your request.")
 
-    reply_to_user(room_id, response)
-    return jsonify({"status": "ok"}), 200
+    return "Processed", 200
+```
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+---
 
---------
+### 🧠 `llm_utils.py`
 
-def get_intent(message: str) -> str:
-    message = message.lower()
-    if "active" in message or "status" in message:
-        return "check_status"
-    elif "resend" in message or "activation" in message:
-        return "resend_activation"
-    else:
-        return "unknown"
+Replace this with your AI Gateway call.
 
-
----------
-import requests
-
-WEBEX_BOT_TOKEN = "<YOUR_WEBEX_BOT_TOKEN>"
-
-HEADERS = {
-    "Authorization": f"Bearer {WEBEX_BOT_TOKEN}",
-    "Content-Type": "application/json"
-}
-
-def get_message_text(message_id: str) -> str:
-    url = f"https://webexapis.com/v1/messages/{message_id}"
-    response = requests.get(url, headers=HEADERS)
-    if response.status_code == 200:
-        return response.json().get("text", "")
-    return ""
-
-def reply_to_user(room_id: str, message: str):
-    url = "https://webexapis.com/v1/messages"
-    payload = {
-        "roomId": room_id,
-        "text": message
+```python
+def get_intent(message):
+    """
+    Example output from LLM:
+    {
+      "intent": "resend_email",
+      "user": "sam123"
     }
-    requests.post(url, json=payload, headers=HEADERS)
+    """
+    # Simulated response
+    if "resend" in message.lower():
+        return "resend_email", extract_user(message)
+    elif "active" in message.lower():
+        return "check_active", extract_user(message)
+    elif "locked" in message.lower():
+        return "check_locked", extract_user(message)
+    return None, None
 
---------------
-def check_user_status(message: str) -> str:
-    # Simulated logic
-    return "✅ The user is currently active."
+def extract_user(message):
+    # Simple logic to extract user ID (customize as needed)
+    words = message.split()
+    for word in words:
+        if word.startswith("ee") or word.startswith("sam"):
+            return word
+    return "unknown_user"
+```
 
-def resend_activation_email(message: str) -> str:
-    # Simulated logic
-    return "📧 Activation email has been resent to the user."
+---
 
+### 🔧 `actions.py`
+
+```python
+def check_user_status(user_id):
+    # Replace with real system call
+    return f"User {user_id} is ACTIVE."
+
+def resend_email(user_id):
+    # Replace with real system call
+    return f"Welcome email sent to {user_id}."
+
+def is_user_locked(user_id):
+    # Replace with real system call
+    return f"User {user_id} is NOT locked."
+```
+
+---
+
+### 🧠 `state_store.py`
+
+```python
+# Simple in-memory store. Replace with Redis/DB for production.
+confirmation_cache = {}
+
+def store_confirmation(user_id, intent, target_user):
+    confirmation_cache[user_id] = {
+        'intent': intent,
+        'target_user': target_user
+    }
+
+def retrieve_confirmation(user_id):
+    return confirmation_cache.pop(user_id, None)
+```
+
+---
+
+### 🧪 Example Flow:
+
+1. User: `Is user sam123 active?`
+2. Bot (after LLM parsing): `Do you want me to proceed with "check active" for user sam123? Reply YES to confirm.`
+3. User: `Yes`
+4. Bot: `User sam123 is ACTIVE.`
+
+---
+
+Let me know if you'd like this wrapped in a zip, turned into a GitHub project, or integrated with your AI Gateway call format.
