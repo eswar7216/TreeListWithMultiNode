@@ -175,3 +175,62 @@ def retrieve_confirmation(user_id):
 ---
 
 Let me know if you'd like this wrapped in a zip, turned into a GitHub project, or integrated with your AI Gateway call format.
+
+
+
+
+
+
+import requests
+import json
+
+AI_GATEWAY_URL = "https://your-ai-gateway.company.com/v1/completions"
+API_KEY = "your_api_key_here"
+
+HEADERS = {
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {API_KEY}"
+}
+
+# This can be a system prompt for consistent intent classification
+SYSTEM_PROMPT = """
+You are an assistant that extracts intent and target user from messages related to Webex support.
+Supported intents:
+- check_active
+- resend_email
+- check_locked
+
+Respond in this format as JSON:
+{
+  "intent": "<intent_name>",
+  "user": "<user_id>"
+}
+If the intent is not one of the above, respond with:
+{
+  "intent": null,
+  "user": null
+}
+"""
+
+def get_intent(user_message: str):
+    payload = {
+        "model": "gpt-4",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message}
+        ],
+        "temperature": 0
+    }
+
+    try:
+        response = requests.post(AI_GATEWAY_URL, headers=HEADERS, json=payload)
+        response.raise_for_status()
+        content = response.json()
+
+        ai_response = content["choices"][0]["message"]["content"]
+        result = json.loads(ai_response)
+        return result.get("intent"), result.get("user")
+    except Exception as e:
+        print(f"Error calling AI Gateway: {e}")
+        return None, None
+
