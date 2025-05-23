@@ -234,3 +234,130 @@ def get_intent(user_message: str):
         print(f"Error calling AI Gateway: {e}")
         return None, None
 
+=======
+Great call — robust **PostgreSQL connection handling** is critical for production. Here’s how to improve it with **retry logic, connection pooling**, and **error handling** using `psycopg2` + `psycopg2.pool`:
+
+---
+
+## ✅ 1. Use a **connection pool** with automatic retry
+
+Update your `db.py`:
+
+```python
+import os
+import time
+import psycopg2
+from psycopg2 import pool, OperationalError
+
+DB_CONFIG = {
+    'dbname': os.getenv("DB_NAME", "your_db"),
+    'user': os.getenv("DB_USER", "your_user"),
+    'password': os.getenv("DB_PASSWORD", "your_password"),
+    'host': os.getenv("DB_HOST", "localhost"),
+    'port': os.getenv("DB_PORT", 5432)
+}
+
+# Global pool variable
+db_pool = None
+
+def init_connection_pool(minconn=1, maxconn=5, retries=5, retry_delay=2):
+    global db_pool
+    for attempt in range(retries):
+        try:
+            db_pool = psycopg2.pool.SimpleConnectionPool(
+                minconn, maxconn, **DB_CONFIG
+            )
+            print("✅ PostgreSQL connection pool initialized")
+            return
+        except OperationalError as e:
+            print(f"❌ Attempt {attempt + 1}: Failed to connect to DB - {e}")
+            time.sleep(retry_delay)
+    raise Exception("❌ Could not initialize DB pool after multiple attempts")
+
+def get_connection():
+    if db_pool is None:
+        raise Exception("DB connection pool not initialized")
+    return db_pool.getconn()
+
+def release_connection(conn):
+    if db_pool and conn:
+        db_pool.putconn(conn)
+
+def close_pool():
+    if db_pool:
+        db_pool.closeall()
+```
+
+Call `init_connection_pool()` once during app startup (e.g., in `main.py`).
+
+---
+
+## ✅ 2. Update `actions.py` with safe handling
+
+```python
+from db import get_connection, release_connection
+
+def check_user_status(user_id):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM users WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        cur.close()
+        return f"User {user_id} is {row[0].upper()}." if row else f"User {user_id} not found."
+    except Exception as e:
+        return f"❌ Error checking user status: {e}"
+    finally:
+        release_connection(conn)
+
+def is_user_locked(user_id):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT is_locked FROM users WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        cur.close()
+        return f"User {user_id} is {'LOCKED' if row and row[0] else 'NOT locked'}."
+    except Exception as e:
+        return f"❌ Error checking lock status: {e}"
+    finally:
+        release_connection(conn)
+```
+
+---
+
+## ✅ 3. Modify `main.py` to initialize the pool on app start
+
+```python
+from flask import Flask, request
+from webex_handler import handle_webhook
+from db import init_connection_pool
+
+app = Flask(__name__)
+
+@app.before_first_request
+def setup():
+    init_connection_pool()
+
+@app.route('/webex', methods=['POST'])
+def webhook():
+    return handle_webhook(request.json)
+
+if __name__ == '__main__':
+    app.run(port=5000)
+```
+
+---
+
+## ✅ Benefits
+
+* **Retries** on connection issues
+* **Pooling** reduces overhead and speeds up queries
+* **Graceful fallback** if DB is unreachable
+* You **don’t leak connections** — all are released safely
+
+---
+
+Let me know if you want metrics/logging added (e.g., with Prometheus or Sentry) or if you'd prefer an async or SQLAlchemy-based version.
