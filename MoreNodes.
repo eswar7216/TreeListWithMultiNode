@@ -1,363 +1,100 @@
-To build a **Webex bot** that uses an **LLM to derive user intent** (such as checking user status or resending activation emails), and then **prompts for confirmation** before executing an action, here's a clean breakdown:
+awesome—here’s a **high-level, ready-to-paste Devin task** based on the COBOL you shared (`sCreatePrimePreExclFile.cbl`). It’s scoped for Linux, focuses on outcomes, and leaves implementation choices to Devin.
 
 ---
 
-### 🧠 Capabilities:
+# Task: Migrate `sCreatePrimePreExclFile.cbl` from COBOL to Python (Linux)
 
-1. Use **LLM** (via your internal AI Gateway) to extract intent from user messages.
-2. Check if intent is one of:
+## Goal
 
-   * "check user active status"
-   * "resend welcome email"
-   * "check if user is account locked"
-3. Prompt user for confirmation.
-4. On confirmation, **perform action** (e.g., resend email).
+Produce a functionally equivalent **Python 3.11** job that replaces `sCreatePrimePreExclFile.cbl`. The job generates the same Prime *Pre-Excl* output files and follows the same control flow, validations, and DB interactions.
 
----
+## Inputs (you already have them as screenshots)
 
-### 🗂 Project Structure:
+* COBOL main: `sCreatePrimePreExclFile.cbl` (\~1,933 lines)
+* Copybooks referenced: `cs-log-message`, `cs-create-prime-pre-excl-file`
+* SQL include: `SQLCA`
+* File definitions:
 
-```
-webex-bot/
-│
-├── main.py               # Entry point
-├── llm_utils.py          # Calls LLM and parses intent
-├── webex_handler.py      # Webhook processing
-├── actions.py            # Actual logic to perform actions
-└── state_store.py        # To temporarily hold confirmation state
-```
+  * `prime-esi-detail-output-file`  (453-byte records)
+  * `prime-asc-detail-output-file`  (453-byte records)
+  * `prime-fep-detail-output-file`  (453-byte records)
+  * Header & trailer records with column titles and totals
+* Key paragraphs (shown in screenshots):
 
----
+  * `0000-mainline`, `1000-initialize-program`, `1100-log-initial-process`
+  * `2000-main-process` including:
 
-### ✅ `main.py`
+    * `2005-pre-edit-work-tbl-rows`
+    * `2010-get-part-id`
+    * `2020-create-partition`
+    * `2030-delete-from-partition`
+    * `2040-insert-from-work-table` (+ MERGE/UPDATE of WAC amounts)
+    * `2050-create-pre-excl-file` (open → iterate cursor → write header/details/trailer → close)
+  * `9000-end-of-job`, `9100-commit`, error paths (`9998-oracle-error`, `9998-program-failure`)
 
-```python
-from flask import Flask, request, jsonify
-from webex_handler import handle_webhook
+## High-Level Requirements
 
-app = Flask(__name__)
+1. **Parity**
 
-@app.route('/webex', methods=['POST'])
-def webhook():
-    return handle_webhook(request.json)
+   * For golden inputs, Python output files must match COBOL (allowing only canonical whitespace/EOL normalization).
+2. **I/O & Layouts**
 
-if __name__ == '__main__':
-    app.run(port=5000)
-```
+   * Implement fixed-width **453-byte** detail records; mirror header and trailer fields/labels.
+   * Numeric handling must respect COBOL rules (signed DISPLAY, **COMP-3**, scale, `ROUND HALF UP`).
+3. **Database Behavior (abstracted)**
 
----
+   * Replicate SQL logic at a high level:
 
-### 🤖 `webex_handler.py`
+     * Determine `w-curr-month` and `w-prev-month`; validate work table freshness.
+     * Detect invalid `exclude_cat_dsc` (spaces) and fail with message.
+     * Read `partition_id`.
+     * Call procedures to **add** list partition and **drop/clean** as needed.
+     * **DELETE** existing rows for the partition.
+     * **INSERT** from work table; apply name-cleanup (`replace/trim`) rules.
+     * **MERGE/UPDATE** logic to combine WAC amounts when matched; insert otherwise.
+   * It’s acceptable to implement the DB layer behind interfaces/stubs (actual Oracle access not required for this task unless credentials are provided).
+4. **Observability & Ops**
 
-```python
-from llm_utils import get_intent
-from actions import check_user_status, resend_email, is_user_locked
-from state_store import store_confirmation, retrieve_confirmation
-from webexteamssdk import WebexTeamsAPI
+   * Structured JSON logging (run\_id, paragraph, table/partition ids, counts, durations).
+   * Non-zero exit on any SQL or I/O error (except tolerated codes like 100).
+   * CLI compatible with cron (e.g., `--file-type`, `--rpt-type`, input/output paths, config).
+5. **Performance**
 
-api = WebexTeamsAPI()
+   * Streaming I/O (do not load entire files in memory). Runtime within **+20%** of COBOL on sample data.
 
-def send_message(person_id, text):
-    api.messages.create(toPersonId=person_id, text=text)
+## Deliverables
 
-def handle_webhook(payload):
-    message_id = payload['data']['id']
-    user_id = payload['data']['personId']
-    msg = api.messages.get(message_id).text.strip()
+* Python project (package name: `prime_pre_excl`) with:
 
-    # Check if we are awaiting confirmation
-    confirmation = retrieve_confirmation(user_id)
-    if confirmation and msg.lower() in ['yes', 'y']:
-        intent = confirmation['intent']
-        target_user = confirmation['target_user']
-        
-        if intent == 'check_active':
-            response = check_user_status(target_user)
-        elif intent == 'resend_email':
-            response = resend_email(target_user)
-        elif intent == 'check_locked':
-            response = is_user_locked(target_user)
-        else:
-            response = "Sorry, I don't recognize that action."
+  * CLI entrypoint and cron-friendly wrapper.
+  * Fixed-width layouts for header/detail/trailer.
+  * Numeric utilities for signed DISPLAY/COMP-3.
+  * High-level DB adapter with methods for: `get_curr_month`, `get_prev_month`, `validate_exclusions`, `get_partition_id`, `create_partition`, `delete_partition_rows`, `insert_from_work_table`, `merge_records`, `commit`.
+  * Tests (unit + parity harness) and docs (`README.md`, `RUNBOOK.md`, `MIGRATION_NOTES.md`).
+* Reconstructed COBOL text (from screenshots) in `reconstructed/` for traceability.
 
-        send_message(user_id, response)
-        return "Action confirmed", 200
+## Definition of Done
 
-    # Else, process normally
-    intent, target_user = get_intent(msg)
-    if intent:
-        store_confirmation(user_id, intent, target_user)
-        send_message(user_id, f"Do you want me to proceed with `{intent.replace('_', ' ')}` for user `{target_user}`? Reply YES to confirm.")
-    else:
-        send_message(user_id, "Sorry, I couldn't understand your request.")
+* One command runs end-to-end on Linux:
 
-    return "Processed", 200
-```
+  ```
+  python -m prime_pre_excl.cli --file-type ES --rpt-type Non-FEP \
+    --input samples/input.dat --output out/pre_excl.dat --config config/app.cfg
+  ```
+* Outputs match COBOL on golden data; logs show identical record counts/totals; all tests pass.
 
----
+## Execution Plan (Devin—do roughly in this order)
 
-### 🧠 `llm_utils.py`
+1. Reconstruct COBOL text from screenshots; verify divisions/paragraph map.
+2. Derive record layouts (header/detail/trailer); assert sizes (detail = 453 bytes).
+3. Scaffold Python project & CLI; add numeric utilities (COMP-3, rounding).
+4. Implement high-level DB adapter with the methods above (real or mocked).
+5. Implement the `2000-main-process` flow and `2050-create-pre-excl-file` loop:
 
-Replace this with your AI Gateway call.
-
-```python
-def get_intent(message):
-    """
-    Example output from LLM:
-    {
-      "intent": "resend_email",
-      "user": "sam123"
-    }
-    """
-    # Simulated response
-    if "resend" in message.lower():
-        return "resend_email", extract_user(message)
-    elif "active" in message.lower():
-        return "check_active", extract_user(message)
-    elif "locked" in message.lower():
-        return "check_locked", extract_user(message)
-    return None, None
-
-def extract_user(message):
-    # Simple logic to extract user ID (customize as needed)
-    words = message.split()
-    for word in words:
-        if word.startswith("ee") or word.startswith("sam"):
-            return word
-    return "unknown_user"
-```
+   * open → write header → stream details from cursor → compute totals → write trailer → close.
+6. Add tests (numeric, layout size checks, flow with mocked DB) and a parity harness.
+7. Document how to run, configure, and schedule; list any deviations in `MIGRATION_NOTES.md`.
 
 ---
 
-### 🔧 `actions.py`
-
-```python
-def check_user_status(user_id):
-    # Replace with real system call
-    return f"User {user_id} is ACTIVE."
-
-def resend_email(user_id):
-    # Replace with real system call
-    return f"Welcome email sent to {user_id}."
-
-def is_user_locked(user_id):
-    # Replace with real system call
-    return f"User {user_id} is NOT locked."
-```
-
----
-
-### 🧠 `state_store.py`
-
-```python
-# Simple in-memory store. Replace with Redis/DB for production.
-confirmation_cache = {}
-
-def store_confirmation(user_id, intent, target_user):
-    confirmation_cache[user_id] = {
-        'intent': intent,
-        'target_user': target_user
-    }
-
-def retrieve_confirmation(user_id):
-    return confirmation_cache.pop(user_id, None)
-```
-
----
-
-### 🧪 Example Flow:
-
-1. User: `Is user sam123 active?`
-2. Bot (after LLM parsing): `Do you want me to proceed with "check active" for user sam123? Reply YES to confirm.`
-3. User: `Yes`
-4. Bot: `User sam123 is ACTIVE.`
-
----
-
-Let me know if you'd like this wrapped in a zip, turned into a GitHub project, or integrated with your AI Gateway call format.
-
-
-
-
-
-
-import requests
-import json
-
-AI_GATEWAY_URL = "https://your-ai-gateway.company.com/v1/completions"
-API_KEY = "your_api_key_here"
-
-HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": f"Bearer {API_KEY}"
-}
-
-# This can be a system prompt for consistent intent classification
-SYSTEM_PROMPT = """
-You are an assistant that extracts intent and target user from messages related to Webex support.
-Supported intents:
-- check_active
-- resend_email
-- check_locked
-
-Respond in this format as JSON:
-{
-  "intent": "<intent_name>",
-  "user": "<user_id>"
-}
-If the intent is not one of the above, respond with:
-{
-  "intent": null,
-  "user": null
-}
-"""
-
-def get_intent(user_message: str):
-    payload = {
-        "model": "gpt-4",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message}
-        ],
-        "temperature": 0
-    }
-
-    try:
-        response = requests.post(AI_GATEWAY_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        content = response.json()
-
-        ai_response = content["choices"][0]["message"]["content"]
-        result = json.loads(ai_response)
-        return result.get("intent"), result.get("user")
-    except Exception as e:
-        print(f"Error calling AI Gateway: {e}")
-        return None, None
-
-=======
-Great call — robust **PostgreSQL connection handling** is critical for production. Here’s how to improve it with **retry logic, connection pooling**, and **error handling** using `psycopg2` + `psycopg2.pool`:
-
----
-
-## ✅ 1. Use a **connection pool** with automatic retry
-
-Update your `db.py`:
-
-```python
-import os
-import time
-import psycopg2
-from psycopg2 import pool, OperationalError
-
-DB_CONFIG = {
-    'dbname': os.getenv("DB_NAME", "your_db"),
-    'user': os.getenv("DB_USER", "your_user"),
-    'password': os.getenv("DB_PASSWORD", "your_password"),
-    'host': os.getenv("DB_HOST", "localhost"),
-    'port': os.getenv("DB_PORT", 5432)
-}
-
-# Global pool variable
-db_pool = None
-
-def init_connection_pool(minconn=1, maxconn=5, retries=5, retry_delay=2):
-    global db_pool
-    for attempt in range(retries):
-        try:
-            db_pool = psycopg2.pool.SimpleConnectionPool(
-                minconn, maxconn, **DB_CONFIG
-            )
-            print("✅ PostgreSQL connection pool initialized")
-            return
-        except OperationalError as e:
-            print(f"❌ Attempt {attempt + 1}: Failed to connect to DB - {e}")
-            time.sleep(retry_delay)
-    raise Exception("❌ Could not initialize DB pool after multiple attempts")
-
-def get_connection():
-    if db_pool is None:
-        raise Exception("DB connection pool not initialized")
-    return db_pool.getconn()
-
-def release_connection(conn):
-    if db_pool and conn:
-        db_pool.putconn(conn)
-
-def close_pool():
-    if db_pool:
-        db_pool.closeall()
-```
-
-Call `init_connection_pool()` once during app startup (e.g., in `main.py`).
-
----
-
-## ✅ 2. Update `actions.py` with safe handling
-
-```python
-from db import get_connection, release_connection
-
-def check_user_status(user_id):
-    conn = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT status FROM users WHERE user_id = %s", (user_id,))
-        row = cur.fetchone()
-        cur.close()
-        return f"User {user_id} is {row[0].upper()}." if row else f"User {user_id} not found."
-    except Exception as e:
-        return f"❌ Error checking user status: {e}"
-    finally:
-        release_connection(conn)
-
-def is_user_locked(user_id):
-    conn = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT is_locked FROM users WHERE user_id = %s", (user_id,))
-        row = cur.fetchone()
-        cur.close()
-        return f"User {user_id} is {'LOCKED' if row and row[0] else 'NOT locked'}."
-    except Exception as e:
-        return f"❌ Error checking lock status: {e}"
-    finally:
-        release_connection(conn)
-```
-
----
-
-## ✅ 3. Modify `main.py` to initialize the pool on app start
-
-```python
-from flask import Flask, request
-from webex_handler import handle_webhook
-from db import init_connection_pool
-
-app = Flask(__name__)
-
-@app.before_first_request
-def setup():
-    init_connection_pool()
-
-@app.route('/webex', methods=['POST'])
-def webhook():
-    return handle_webhook(request.json)
-
-if __name__ == '__main__':
-    app.run(port=5000)
-```
-
----
-
-## ✅ Benefits
-
-* **Retries** on connection issues
-* **Pooling** reduces overhead and speeds up queries
-* **Graceful fallback** if DB is unreachable
-* You **don’t leak connections** — all are released safely
-
----
-
-Let me know if you want metrics/logging added (e.g., with Prometheus or Sentry) or if you'd prefer an async or SQLAlchemy-based version.
+Paste that into Devin, and you’re set. If you want, I can also generate a compact **field map** for the 453-byte detail record (names + widths) to give Devin even more structure.
