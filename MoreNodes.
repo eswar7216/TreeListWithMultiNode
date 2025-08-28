@@ -1,100 +1,33 @@
-awesome—here’s a **high-level, ready-to-paste Devin task** based on the COBOL you shared (`sCreatePrimePreExclFile.cbl`). It’s scoped for Linux, focuses on outcomes, and leaves implementation choices to Devin.
+Got it 👍 — here’s a more casual version you can send to leadership. It keeps the same core points, but in a friendlier, easy-to-read tone without all the heavy business jargon:
 
----
+⸻
 
-# Task: Migrate `sCreatePrimePreExclFile.cbl` from COBOL to Python (Linux)
+Subject: Proposal – AI Webex Support Bot
 
-## Goal
+Hi [Leader’s Name],
 
-Produce a functionally equivalent **Python 3.11** job that replaces `sCreatePrimePreExclFile.cbl`. The job generates the same Prime *Pre-Excl* output files and follows the same control flow, validations, and DB interactions.
+I wanted to share an idea that can really cut down the time and effort our team is spending on Webex support. Right now, when users run into issues like login failures, password resets, or missing welcome emails, it takes our support managers and developers anywhere from 2–3 hours to dig through logs and fix things manually. With ~30–50 of these requests coming in each month, that’s a big chunk of time going into repetitive work.
 
-## Inputs (you already have them as screenshots)
+Here’s the proposal:
+We use an AI-powered bot that can automatically detect the intent of incoming support requests and either suggest the right fix or even resolve them on its own.
 
-* COBOL main: `sCreatePrimePreExclFile.cbl` (\~1,933 lines)
-* Copybooks referenced: `cs-log-message`, `cs-create-prime-pre-excl-file`
-* SQL include: `SQLCA`
-* File definitions:
+What this means for us:
+	•	Time savings: About 60–100 hours per month freed up.
+	•	Cost savings: Roughly $6K–$10K/month in productivity value.
+	•	Faster fixes: Issues that used to take hours can be solved in minutes.
+	•	Happier developers: Less time lost on manual checks, more focus on delivery and innovation.
+	•	Scales easily: As requests grow, we won’t need to add more people just to handle them.
 
-  * `prime-esi-detail-output-file`  (453-byte records)
-  * `prime-asc-detail-output-file`  (453-byte records)
-  * `prime-fep-detail-output-file`  (453-byte records)
-  * Header & trailer records with column titles and totals
-* Key paragraphs (shown in screenshots):
+Next steps:
+We’d start with a pilot focusing on the top recurring issues (logins, password resets, welcome emails). From there, we can measure hours saved, resolution speed, and overall impact before expanding further.
 
-  * `0000-mainline`, `1000-initialize-program`, `1100-log-initial-process`
-  * `2000-main-process` including:
+In short: this is a quick win that saves us time, money, and makes life easier for both our support team and our developers.
 
-    * `2005-pre-edit-work-tbl-rows`
-    * `2010-get-part-id`
-    * `2020-create-partition`
-    * `2030-delete-from-partition`
-    * `2040-insert-from-work-table` (+ MERGE/UPDATE of WAC amounts)
-    * `2050-create-pre-excl-file` (open → iterate cursor → write header/details/trailer → close)
-  * `9000-end-of-job`, `9100-commit`, error paths (`9998-oracle-error`, `9998-program-failure`)
+Would love your go-ahead to move this forward.
 
-## High-Level Requirements
+Thanks,
+Eswar
 
-1. **Parity**
+⸻
 
-   * For golden inputs, Python output files must match COBOL (allowing only canonical whitespace/EOL normalization).
-2. **I/O & Layouts**
-
-   * Implement fixed-width **453-byte** detail records; mirror header and trailer fields/labels.
-   * Numeric handling must respect COBOL rules (signed DISPLAY, **COMP-3**, scale, `ROUND HALF UP`).
-3. **Database Behavior (abstracted)**
-
-   * Replicate SQL logic at a high level:
-
-     * Determine `w-curr-month` and `w-prev-month`; validate work table freshness.
-     * Detect invalid `exclude_cat_dsc` (spaces) and fail with message.
-     * Read `partition_id`.
-     * Call procedures to **add** list partition and **drop/clean** as needed.
-     * **DELETE** existing rows for the partition.
-     * **INSERT** from work table; apply name-cleanup (`replace/trim`) rules.
-     * **MERGE/UPDATE** logic to combine WAC amounts when matched; insert otherwise.
-   * It’s acceptable to implement the DB layer behind interfaces/stubs (actual Oracle access not required for this task unless credentials are provided).
-4. **Observability & Ops**
-
-   * Structured JSON logging (run\_id, paragraph, table/partition ids, counts, durations).
-   * Non-zero exit on any SQL or I/O error (except tolerated codes like 100).
-   * CLI compatible with cron (e.g., `--file-type`, `--rpt-type`, input/output paths, config).
-5. **Performance**
-
-   * Streaming I/O (do not load entire files in memory). Runtime within **+20%** of COBOL on sample data.
-
-## Deliverables
-
-* Python project (package name: `prime_pre_excl`) with:
-
-  * CLI entrypoint and cron-friendly wrapper.
-  * Fixed-width layouts for header/detail/trailer.
-  * Numeric utilities for signed DISPLAY/COMP-3.
-  * High-level DB adapter with methods for: `get_curr_month`, `get_prev_month`, `validate_exclusions`, `get_partition_id`, `create_partition`, `delete_partition_rows`, `insert_from_work_table`, `merge_records`, `commit`.
-  * Tests (unit + parity harness) and docs (`README.md`, `RUNBOOK.md`, `MIGRATION_NOTES.md`).
-* Reconstructed COBOL text (from screenshots) in `reconstructed/` for traceability.
-
-## Definition of Done
-
-* One command runs end-to-end on Linux:
-
-  ```
-  python -m prime_pre_excl.cli --file-type ES --rpt-type Non-FEP \
-    --input samples/input.dat --output out/pre_excl.dat --config config/app.cfg
-  ```
-* Outputs match COBOL on golden data; logs show identical record counts/totals; all tests pass.
-
-## Execution Plan (Devin—do roughly in this order)
-
-1. Reconstruct COBOL text from screenshots; verify divisions/paragraph map.
-2. Derive record layouts (header/detail/trailer); assert sizes (detail = 453 bytes).
-3. Scaffold Python project & CLI; add numeric utilities (COMP-3, rounding).
-4. Implement high-level DB adapter with the methods above (real or mocked).
-5. Implement the `2000-main-process` flow and `2050-create-pre-excl-file` loop:
-
-   * open → write header → stream details from cursor → compute totals → write trailer → close.
-6. Add tests (numeric, layout size checks, flow with mocked DB) and a parity harness.
-7. Document how to run, configure, and schedule; list any deviations in `MIGRATION_NOTES.md`.
-
----
-
-Paste that into Devin, and you’re set. If you want, I can also generate a compact **field map** for the 453-byte detail record (names + widths) to give Devin even more structure.
+Do you want me to also make this into a short slide deck (3–4 slides) so you can present it quickly in a leadership sync?
