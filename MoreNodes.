@@ -1,33 +1,156 @@
-Got it 👍 — here’s a more casual version you can send to leadership. It keeps the same core points, but in a friendlier, easy-to-read tone without all the heavy business jargon:
+Got it 👍 — I’ll add JSDoc-style comments to make the code more self-explanatory for future readers and maintainers.
 
-⸻
+Here’s your refactored version with JavaScript documentation included:
 
-Subject: Proposal – AI Webex Support Bot
+/**
+ * Represents an opportunity in the system.
+ */
+type Opportunity = {
+  product?: { penaltyType?: string | null } | null;
+  availableOptions?: { savingsPerMonth?: number | null } | null;
+  prescription: { refillsRemaining: number; refillsExhausted: boolean };
+};
 
-Hi [Leader’s Name],
+/**
+ * Enum for the possible header classifications.
+ */
+enum HeaderType {
+  HardReject = 'hardReject',
+  UnknownSavings = 'unknownSavings',
+  KnownSavings = 'knownSavings',
+  LowerSavings = 'lowerSavings',
+  None = 'none',
+}
 
-I wanted to share an idea that can really cut down the time and effort our team is spending on Webex support. Right now, when users run into issues like login failures, password resets, or missing welcome emails, it takes our support managers and developers anywhere from 2–3 hours to dig through logs and fix things manually. With ~30–50 of these requests coming in each month, that’s a big chunk of time going into repetitive work.
+/**
+ * Enum for the possible fill classifications.
+ */
+enum FillType {
+  FillWithPenalty = 'fillWithPenalty',
+  NoFillsRemaining = 'noFillsRemaining',
+  FillsRemaining = 'fillsRemaining',
+  None = 'none',
+}
 
-Here’s the proposal:
-We use an AI-powered bot that can automatically detect the intent of incoming support requests and either suggest the right fix or even resolve them on its own.
+// --- Helpers -----------------------------------------------------------------
 
-What this means for us:
-	•	Time savings: About 60–100 hours per month freed up.
-	•	Cost savings: Roughly $6K–$10K/month in productivity value.
-	•	Faster fixes: Issues that used to take hours can be solved in minutes.
-	•	Happier developers: Less time lost on manual checks, more focus on delivery and innovation.
-	•	Scales easily: As requests grow, we won’t need to add more people just to handle them.
+/**
+ * Checks if the opportunity has a penalty.
+ * @param {Opportunity} o - The opportunity object.
+ * @returns {boolean} True if the penalty type is "AHR".
+ */
+const hasPenalty = (o: Opportunity) => o.product?.penaltyType === 'AHR';
 
-Next steps:
-We’d start with a pilot focusing on the top recurring issues (logins, password resets, welcome emails). From there, we can measure hours saved, resolution speed, and overall impact before expanding further.
+/**
+ * Extracts monthly savings from the opportunity.
+ * @param {Opportunity} o - The opportunity object.
+ * @returns {number | null} The savings per month, or null if unavailable.
+ */
+const savings = (o: Opportunity) => o.availableOptions?.savingsPerMonth ?? null;
 
-In short: this is a quick win that saves us time, money, and makes life easier for both our support team and our developers.
+/**
+ * Checks if a number is greater than 5.
+ * @param {number | null} n - The number to check.
+ * @returns {boolean} True if the number is > 5.
+ */
+const isAboveFive = (n: number | null) => n != null && n > 5;
 
-Would love your go-ahead to move this forward.
+/**
+ * Checks if a number is less than or equal to 5.
+ * @param {number | null} n - The number to check.
+ * @returns {boolean} True if the number is <= 5.
+ */
+const isAtOrBelowFive = (n: number | null) => n != null && n <= 5;
 
-Thanks,
-Eswar
+// --- Classification ----------------------------------------------------------
 
-⸻
+/**
+ * Classifies the header type for an opportunity.
+ * @param {Opportunity} o - The opportunity object.
+ * @param {boolean} [hasDeductible] - Whether the deductible applies.
+ * @returns {HeaderType} The classified header type.
+ */
+function classifyHeader(o: Opportunity, hasDeductible?: boolean): HeaderType {
+  if (hasPenalty(o)) return HeaderType.HardReject;
+  if (hasDeductible) return HeaderType.UnknownSavings;
 
-Do you want me to also make this into a short slide deck (3–4 slides) so you can present it quickly in a leadership sync?
+  const s = savings(o);
+  if (isAboveFive(s)) return HeaderType.KnownSavings;
+  if (isAtOrBelowFive(s)) return HeaderType.LowerSavings;
+
+  return HeaderType.None;
+}
+
+/**
+ * Classifies the fill type for an opportunity.
+ * @param {Opportunity} o - The opportunity object.
+ * @returns {FillType} The classified fill type.
+ */
+function classifyFill(o: Opportunity): FillType {
+  const { refillsRemaining, refillsExhausted } = o.prescription;
+
+  if (refillsRemaining !== 0 && refillsExhausted) return FillType.FillWithPenalty;
+  if (refillsRemaining === 0 && !refillsExhausted) return FillType.NoFillsRemaining;
+  if (refillsRemaining > 0) return FillType.FillsRemaining;
+
+  return FillType.None;
+}
+
+// --- Rule Matrix -------------------------------------------------------------
+
+/**
+ * A lookup table mapping HeaderType + FillType to i18n suffixes.
+ */
+const keyMatrix: Partial<Record<HeaderType, Partial<Record<FillType, string>>>> = {
+  [HeaderType.HardReject]: {
+    [FillType.FillWithPenalty]: 'hardReject.fillWithPenalty',
+    [FillType.NoFillsRemaining]: 'hardReject.noFillsRemaining',
+    [FillType.FillsRemaining]: 'hardReject.fillsRemaining',
+  },
+  [HeaderType.UnknownSavings]: {
+    [FillType.FillWithPenalty]: 'unknownSavings.fillWithPenalty',
+    [FillType.NoFillsRemaining]: 'unknownSavings.noFillsRemaining',
+    [FillType.FillsRemaining]: 'unknownSavings.fillsRemaining',
+  },
+  [HeaderType.KnownSavings]: {
+    [FillType.FillWithPenalty]: 'knownSavings.fillWithPenalty',
+    [FillType.NoFillsRemaining]: 'knownSavings.noFillsRemaining',
+    [FillType.FillsRemaining]: 'knownSavings.fillsRemaining',
+  },
+  [HeaderType.LowerSavings]: {
+    [FillType.FillWithPenalty]: 'lowerSavings.fillWithPenalty',
+    [FillType.NoFillsRemaining]: 'lowerSavings.noFillsRemaining',
+    [FillType.FillsRemaining]: 'lowerSavings.fillsRemaining',
+  },
+};
+
+// --- Public API --------------------------------------------------------------
+
+/**
+ * Returns i18n-ready header and subHeader keys for an opportunity.
+ * @param {Object} params - Function parameters.
+ * @param {Opportunity} params.opportunity - The opportunity object.
+ * @param {boolean} [params.hasDeductible] - Whether the deductible applies.
+ * @returns {{ header: string, subHeader: string }} The translation keys.
+ */
+export function getLandingPageHeaderTexts(
+  params: { opportunity: Opportunity; hasDeductible?: boolean }
+) {
+  const headerType = classifyHeader(params.opportunity, params.hasDeductible);
+  const fillType = classifyFill(params.opportunity);
+
+  const suffix =
+    keyMatrix[headerType]?.[fillType] ??
+    (headerType !== HeaderType.None && fillType !== FillType.None
+      ? `${headerType}.${fillType}`
+      : 'default');
+
+  return {
+    header: `landing.headers.${suffix}.header`,
+    subHeader: `landing.headers.${suffix}.subheader`,
+  };
+}
+
+✨ Now each helper, enum, and exported function has clear JSDoc annotations so IDEs (VS Code, WebStorm) and TypeScript-aware tooling will show inline docs and autocomplete.
+
+Would you like me to also add example usages in the JSDoc (e.g., @example blocks for getLandingPageHeaderTexts)? That could help future devs see how it’s meant to be consumed.
