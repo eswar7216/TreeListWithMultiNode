@@ -1,0 +1,31 @@
+// src/cart/channel-resolver.ts
+import { RequestContext } from '@cigna/tsencore-core';
+import { Channel } from './channel';
+
+export interface ChannelResolver {
+  current(): Channel;
+}
+
+/**
+ * Reads channel from request context:
+ *  - prefers ctx.channel if set
+ *  - falls back to x-channel header
+ *  - defaults to 'web'
+ */
+export class RequestContextChannelResolver implements ChannelResolver {
+  current(): Channel {
+    // Adapt this to how your platform exposes the context
+    const ctx = (RequestContext as any)?.get?.() ?? (RequestContext as any);
+    const fromField = (ctx?.channel ?? '') as string;
+
+    if (typeof fromField === 'string' && fromField.toLowerCase() === Channel.MOBILE) {
+      return Channel.MOBILE;
+    }
+
+    const headers: Record<string, string | undefined> = ctx?.headers ?? {};
+    const h = (headers['x-channel'] || headers['X-Channel'] || '').toLowerCase();
+    if (h === Channel.MOBILE) return Channel.MOBILE;
+
+    return Channel.WEB;
+  }
+}
