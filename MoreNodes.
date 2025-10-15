@@ -1,44 +1,46 @@
-// src/cart/web-cart.service.ts
+// src/cart/cart.service.ts   // Delegator; same name your controller injects
+// Your controller keeps @inject(CartService) public cartService: CartService.
 import { injectable, inject } from 'tsyringe';
-import { Logger } from '@cigna/tsencore-core';
 import { AddToCartRequest, AddToCartResponse } from '../domain/models/request/addToCart.model';
 import { GetCartResponse } from '../domain/models/getCart.model';
-import { CartAdapter } from '../adapters/cart.adapter';            // your actual path/type
-import { MembershipAdapter } from '../adapters/membership.adapter'; // your actual path/type
+import { Channel } from './channel';
+import { ChannelResolver } from './channel-resolver';
+import { WebCartService } from './web-cart.service';
+import { MobileCartService } from './mobile-cart.service';
+
+export interface IChannelCartService {
+  getCart(): Promise<GetCartResponse>;
+  addItemsToCart(cartResourceId: string, req: AddToCartRequest): Promise<AddToCartResponse>;
+}
 
 @injectable()
-export class WebCartService {
+export class CartService implements IChannelCartService {
+  private readonly map: Map<Channel, IChannelCartService>;
+
   constructor(
-    @inject('Logger') private readonly logger: Logger,
-    @inject('CartAdapter') private readonly cartAdapter: CartAdapter,
-    @inject('MembershipAdapter') private readonly membershipAdapter: MembershipAdapter,
-  ) {}
+    @inject('ChannelResolver') private readonly resolver: ChannelResolver,
+    @inject(WebCartService) private readonly web: WebCartService,
+    @inject(MobileCartService) private readonly mobile: MobileCartService,
+  ) {
+    this.map = new Map<Channel, IChannelCartService>([
+      [Channel.WEB, this.web],
+      [Channel.MOBILE, this.mobile],
+    ]);
+  }
+
+  private pick(): IChannelCartService {
+    const ch = this.resolver.current();
+    return this.map.get(ch) ?? this.web;
+  }
 
   public async getCart(): Promise<GetCartResponse> {
-    this.logger.info('[WEB] Getting Cart');
-    const { group, memberId, personNumber } = await this.getMembershipData();
-    return this.cartAdapter.getCart(group, memberId, personNumber);
+    return this.pick().getCart();
   }
 
   public async addItemsToCart(
     cartResourceId: string,
     addToCartRequest: AddToCartRequest
   ): Promise<AddToCartResponse> {
-    this.logger.info('[WEB] Adding items', { cartResourceId, items: addToCartRequest?.items?.length });
-    return this.cartAdapter.addItemsToCart({ cartResourceId, ...addToCartRequest });
-  }
-
-  private async getMembershipData() {
-    const memberData = await this.membershipAdapter.getCurrentMemberData();
-    // put your existing extraction here (copied from your current service)
-    const personResourceId = memberData.sessionInfo.loginProfilePersonResourceId as string;
-    const loggedPatient = memberData.membership?.patients?.find(
-      (p: any) => p.personResourceId === personResourceId
-    );
-    return {
-      group: loggedPatient?.group?.id as string,
-      memberId: memberData.membership?.id as string,
-      personNumber: loggedPatient?.personNumber as string,
-    };
+    return this.pick().addItemsToCart(cartResourceId, addToCartRequest);
   }
 }
