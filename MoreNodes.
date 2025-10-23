@@ -1,46 +1,26 @@
-// src/cart/cart.service.ts   // Delegator; same name your controller injects
-// Your controller keeps @inject(CartService) public cartService: CartService.
-import { injectable, inject } from 'tsyringe';
-import { AddToCartRequest, AddToCartResponse } from '../domain/models/request/addToCart.model';
-import { GetCartResponse } from '../domain/models/getCart.model';
-import { Channel } from './channel';
-import { ChannelResolver } from './channel-resolver';
-import { WebCartService } from './web-cart.service';
-import { MobileCartService } from './mobile-cart.service';
 
-export interface IChannelCartService {
-  getCart(): Promise<GetCartResponse>;
-  addItemsToCart(cartResourceId: string, req: AddToCartRequest): Promise<AddToCartResponse>;
-}
 
-@injectable()
-export class CartService implements IChannelCartService {
-  private readonly map: Map<Channel, IChannelCartService>;
+- Hi everyone, I’m Gowthami — one of the senior engineers in the web space. I’ve worked on Payments, and Evernorth rebranding effort, and right now I’m the lead developer for Savings Advisor DISC. 
 
-  constructor(
-    @inject('ChannelResolver') private readonly resolver: ChannelResolver,
-    @inject(WebCartService) private readonly web: WebCartService,
-    @inject(MobileCartService) private readonly mobile: MobileCartService,
-  ) {
-    this.map = new Map<Channel, IChannelCartService>([
-      [Channel.WEB, this.web],
-      [Channel.MOBILE, this.mobile],
-    ]);
-  }
+- Today I want to walk you through what we did for Evernorth rebranding — how things used to work before, what problems we ran into, and how we completely reworked the theming approach. And please, feel free to jump in anytime if you have questions.
 
-  private pick(): IChannelCartService {
-    const ch = this.resolver.current();
-    return this.map.get(ch) ?? this.web;
-  }
+- So, before the rebranding, when a member logged in, our main project — **consumer-ui** — would load all the static files and the theme that went with it. After that, depending on which page the user was visiting, the respective **micro frontend (MFE)** would load its own static assets. Finally, at the very end, we had what we called a **cobrand file**, which applied any client-specific styles. So, the order was: consumer-ui → MFE → cobrand. Pretty straightforward.
 
-  public async getCart(): Promise<GetCartResponse> {
-    return this.pick().getCart();
-  }
+- The problems with existing architecture are most MFEs had **hardcoded styles** — meaning colors, fonts, and paddings were directly written in MFE's. So, each MFE was pretty much deciding how it looked. On top of that, our theme was being injected **at build time**, not at runtime. That meant if we wanted to change branding, we had to rebuild and redeploy everything.
+ We also have a requirement to show PBM theme for DOD client users. That meant we needed to support **multiple themes** based on who was logging in. But with our existing system, that was just not possible. The old setup was too rigid — it simply wasn’t designed for dynamic theming.
 
-  public async addItemsToCart(
-    cartResourceId: string,
-    addToCartRequest: AddToCartRequest
-  ): Promise<AddToCartResponse> {
-    return this.pick().addItemsToCart(cartResourceId, addToCartRequest);
-  }
-}
+- I will go over the road map now,  The very first step started with our **design team**, who created a new library called **Leaf Design Tokens**. Think of design tokens as a centralized dictionary for all our styles — colors, spacing, fonts, everything. The tokens they built part of the library are **brand-agnostic**. For example, something like `leaf-header-bg-color` would map to blue in PBM and green in Evernorth.
+- Once the token library was ready, we started the cleanup in MFE's — removing all the hardcoded styles from MFEs and replacing them with **semantic tokens** from that library. That way, every MFE could automatically adapt to whichever theme got applied later.
+- The next major step was implementing **dynamic theming** inside **consumer-ui**, our parent project. We built a small library that can inject themes **at runtime** — not at build time. So when a user logs in, this library figures out which theme they should see. If it’s a DOD user, we inject the PBM theme; if it’s everyone else, we inject Evernorth. Each theme is just a CSS file built from the same design tokens, and it controls everything — colors, fonts, spacing, and overall look.
+- now load all available themes up front, but we only inject the one that applies to the current user. The MFEs don’t even know which brand they’re showing; they just use the token values already present in the DOM. So, whether it’s PBM, Evernorth, or something new in the future, the MFEs automatically stay in sync.
+- We also supporting **cobranding**, because some clients want their own styles on top of our themes. For example, **PepsiCo** might want their logo in the header or yellow buttons across the site. We handle that through cobrand CSS files that always load last, so they override any existing styles. One of our biggest cobranded clients, **ERS**, uses this setup — and it works perfectly within our new architecture since we’ve tokenized their styles too.
+
+Let me go over new flow now and how it works -
+when a user logs in, here’s what happens:
+First, consumer-ui loads and brings in all the static assets, including all theme files. Those themes aren’t applied yet. Then, based on the user’s context, the runtime library injects the correct theme into the DOM. After that, MFEs load, and since they use tokens, they automatically get the right look and feel. Finally, cobrand styles load last, applying any client-specific overrides. The entire flow is smooth and fully dynamic.
+
+So, in the end, the Evernorth rebranding was much more than just a visual update — it was a full redesign of how theming works in Member Web. We centralized everything through the **Leaf Design Token library**, made all MFEs use tokens, added runtime theme injection in consumer-ui, and kept our cobranding model intact. Now, we can support multiple brands or clients at once, roll out updates faster, and make future rebrands simple.
+
+It’s been a huge improvement — moving us from hardcoded, static styles to a **flexible, scalable, white-label system** that’s ready for whatever comes next.
+
+
