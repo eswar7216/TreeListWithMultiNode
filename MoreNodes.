@@ -1,26 +1,26 @@
+In the earlier version of Savings Advisor, the system was tightly coupled with individual products. 
+This meant that each time a new product was introduced, a significant amount of engineering effort was required to integrate it. 
+The logic, presentation, and data handling were all product-specific, resulting in repetitive work, longer onboarding cycles, and reduced flexibility.
+
+With the introduction of the DISC framework, we are transitioning from a product-oriented model to a choice-oriented framework. 
+The key idea is to decouple product logic from the Savings Advisor core and move that logic into dedicated Product APIs.
+This abstraction allows DISC to remain stable and reusable even as new products are onboarded.
+
+In the choice-oriented framework, users are presented with all possible savings choices available for a given opportunity—such 
+as brand-to-generic, 90-day supply, or pharmacy switch—regardless of which product they are currently enrolled in. 
+These choices are standardized across all products, ensuring a consistent experience, simpler onboarding, and reduced maintenance overhead.
 
 
-- Hi everyone, I’m Gowthami — one of the senior engineers in the web space. I’ve worked on Payments, and Evernorth rebranding effort, and right now I’m the lead developer for Savings Advisor DISC. 
+This modernization makes Savings Advisor more scalable, maintainable, and future-ready as new savings programs and products are introduced.
 
-- Today I want to walk you through what we did for Evernorth rebranding — how things used to work before, what problems we ran into, and how we completely reworked the theming approach. And please, feel free to jump in anytime if you have questions.
 
-- So, before the rebranding, when a member logged in, our main project — **consumer-ui** — would load all the static files and the theme that went with it. After that, depending on which page the user was visiting, the respective **micro frontend (MFE)** would load its own static assets. Finally, at the very end, we had what we called a **cobrand file**, which applied any client-specific styles. So, the order was: consumer-ui → MFE → cobrand. Pretty straightforward.
+Now let me walk you through how this works in practice with a quick demo.
 
-- The problems with existing architecture are most MFEs had **hardcoded styles** — meaning colors, fonts, and paddings were directly written in MFE's. So, each MFE was pretty much deciding how it looked. On top of that, our theme was being injected **at build time**, not at runtime. That meant if we wanted to change branding, we had to rebuild and redeploy everything.
- We also have a requirement to show PBM theme for DOD client users. That meant we needed to support **multiple themes** based on who was logging in. But with our existing system, that was just not possible. The old setup was too rigid — it simply wasn’t designed for dynamic theming.
+When a user lands on the Savings Advisor landing screen, they see two main cards. 
+The first card displays details about their last fill—showing where they filled their most recent prescription, how much it cost,
+and what their cost would be if they continued with the same pharmacy, based on their current deductible phase and at what fill they are on.
 
-- I will go over the road map now,  The very first step started with our **design team**, who created a new library called **Leaf Design Tokens**. Think of design tokens as a centralized dictionary for all our styles — colors, spacing, fonts, everything. The tokens they built part of the library are **brand-agnostic**. For example, something like `leaf-header-bg-color` would map to blue in PBM and green in Evernorth.
-- Once the token library was ready, we started the cleanup in MFE's — removing all the hardcoded styles from MFEs and replacing them with **semantic tokens** from that library. That way, every MFE could automatically adapt to whichever theme got applied later.
-- The next major step was implementing **dynamic theming** inside **consumer-ui**, our parent project. We built a small library that can inject themes **at runtime** — not at build time. So when a user logs in, this library figures out which theme they should see. If it’s a DOD user, we inject the PBM theme; if it’s everyone else, we inject Evernorth. Each theme is just a CSS file built from the same design tokens, and it controls everything — colors, fonts, spacing, and overall look.
-- now load all available themes up front, but we only inject the one that applies to the current user. The MFEs don’t even know which brand they’re showing; they just use the token values already present in the DOM. So, whether it’s PBM, Evernorth, or something new in the future, the MFEs automatically stay in sync.
-- We also supporting **cobranding**, because some clients want their own styles on top of our themes. For example, **PepsiCo** might want their logo in the header or yellow buttons across the site. We handle that through cobrand CSS files that always load last, so they override any existing styles. One of our biggest cobranded clients, **ERS**, uses this setup — and it works perfectly within our new architecture since we’ve tokenized their styles too.
+On the right side, the system displays the available savings choices for that opportunity. For example, if the user’s last fill was at a non-contracted pharmacy, the system recommends switching to a contracted pharmacy as a savings option. If the user is currently filling a 30-day supply, we may recommend moving to a 90-day fill for better savings. Similarly, if a generic alternative is available, the system presents that as a recommended switch option.
 
-Let me go over new flow now and how it works -
-when a user logs in, here’s what happens:
-First, consumer-ui loads and brings in all the static assets, including all theme files. Those themes aren’t applied yet. Then, based on the user’s context, the runtime library injects the correct theme into the DOM. After that, MFEs load, and since they use tokens, they automatically get the right look and feel. Finally, cobrand styles load last, applying any client-specific overrides. The entire flow is smooth and fully dynamic.
-
-So, in the end, the Evernorth rebranding was much more than just a visual update — it was a full redesign of how theming works in Member Web. We centralized everything through the **Leaf Design Token library**, made all MFEs use tokens, added runtime theme injection in consumer-ui, and kept our cobranding model intact. Now, we can support multiple brands or clients at once, roll out updates faster, and make future rebrands simple.
-
-It’s been a huge improvement — moving us from hardcoded, static styles to a **flexible, scalable, white-label system** that’s ready for whatever comes next.
-
+Below these cards, users can easily compare and see how much they would save if they choose one of the recommended options.
 
