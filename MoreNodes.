@@ -1,26 +1,45 @@
-In the earlier version of Savings Advisor, the system was tightly coupled with individual products. 
-This meant that each time a new product was introduced, a significant amount of engineering effort was required to integrate it. 
-The logic, presentation, and data handling were all product-specific, resulting in repetitive work, longer onboarding cycles, and reduced flexibility.
+// src/cart/cart.service.ts
+import { injectable } from 'tsyringe';
+import { WebCartService } from './web-cart.service';
+import { MobileCartService } from './mobile-cart.service';
+import { RequestContextChannelResolver } from './channel-resolver';
+import { Channel } from './channel';
+import { AddToCartRequest, AddToCartResponse } from '../domain/models/request/addToCart.model';
+import { GetCartResponse } from '../domain/models/getCart.model';
 
-With the introduction of the DISC framework, we are transitioning from a product-oriented model to a choice-oriented framework. 
-The key idea is to decouple product logic from the Savings Advisor core and move that logic into dedicated Product APIs.
-This abstraction allows DISC to remain stable and reusable even as new products are onboarded.
+export interface ICartService {
+  getCart(): Promise<GetCartResponse>;
+  addItemsToCart(cartResourceId: string, req: AddToCartRequest): Promise<AddToCartResponse>;
+}
 
-In the choice-oriented framework, users are presented with all possible savings choices available for a given opportunity—such 
-as brand-to-generic, 90-day supply, or pharmacy switch—regardless of which product they are currently enrolled in. 
-These choices are standardized across all products, ensuring a consistent experience, simpler onboarding, and reduced maintenance overhead.
+/**
+ * Delegates to WebCartService or MobileCartService based on RequestContext.channel.
+ */
+@injectable()
+export class CartService implements ICartService {
+  private readonly map: Map<Channel, ICartService>;
 
+  constructor(
+    private readonly resolver: RequestContextChannelResolver,
+    private readonly web: WebCartService,
+    private readonly mobile: MobileCartService
+  ) {
+    this.map = new Map<Channel, ICartService>([
+      [Channel.WEB, this.web],
+      [Channel.MOBILE, this.mobile],
+    ]);
+  }
 
-This modernization makes Savings Advisor more scalable, maintainable, and future-ready as new savings programs and products are introduced.
+  private pick(): ICartService {
+    const channel = this.resolver.current();
+    return this.map.get(channel) ?? this.web;
+  }
 
+  getCart(): Promise<GetCartResponse> {
+    return this.pick().getCart();
+  }
 
-Now let me walk you through how this works in practice with a quick demo.
-
-When a user lands on the Savings Advisor landing screen, they see two main cards. 
-The first card displays details about their last fill—showing where they filled their most recent prescription, how much it cost,
-and what their cost would be if they continued with the same pharmacy, based on their current deductible phase and at what fill they are on.
-
-On the right side, the system displays the available savings choices for that opportunity. For example, if the user’s last fill was at a non-contracted pharmacy, the system recommends switching to a contracted pharmacy as a savings option. If the user is currently filling a 30-day supply, we may recommend moving to a 90-day fill for better savings. Similarly, if a generic alternative is available, the system presents that as a recommended switch option.
-
-Below these cards, users can easily compare and see how much they would save if they choose one of the recommended options.
-
+  addItemsToCart(cartResourceId: string, req: AddToCartRequest): Promise<AddToCartResponse> {
+    return this.pick().addItemsToCart(cartResourceId, req);
+  }
+}
