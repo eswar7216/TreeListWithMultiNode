@@ -1,0 +1,10 @@
+---
+description: Logging standards for API requests
+globs: ["src/**/*.ts", "src/**/*.js"]
+alwaysApply: false
+---
+
+# Logging requirements
+- Every request must have a requestId (x-request-id header or generate one)
+- Log start + end of request with statusCode and duration
+- Do not log entire request bodies (PII risk); log a safe summary only
