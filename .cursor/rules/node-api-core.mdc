@@ -1,0 +1,17 @@
+---
+description: Core Node API conventions for this repo
+alwaysApply: true
+---
+
+# Commands (always run before finishing)
+- `npm test`
+- `npm run typecheck` (if present)
+
+# API conventions
+- Controllers must be thin: parse/validate input, call service, return response
+- Services contain business logic; controllers do not
+- Use Express error middleware for non-happy paths (call next(err))
+
+# Change discipline
+- Prefer small diffs; avoid unrelated refactors
+- Update tests with behavior changes
