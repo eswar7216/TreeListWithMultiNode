@@ -1,0 +1,10 @@
+---
+description: Architecture boundaries for Node API code
+alwaysApply: true
+---
+
+# Layering
+- routes -> controllers -> services
+- middleware is cross-cutting (logging, errors, request context)
+- no business logic in routes/controllers
+- errors should be normalized in one middleware
