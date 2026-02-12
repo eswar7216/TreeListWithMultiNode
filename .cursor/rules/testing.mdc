@@ -1,0 +1,13 @@
+---
+description: Testing standards for HTTP endpoints
+globs: ["src/**/*.ts", "test/**/*.ts"]
+alwaysApply: false
+---
+
+# Testing
+- Every new endpoint must have Supertest integration tests
+- Tests must assert:
+  - status codes
+  - response body shape
+  - at least one negative case (validation error)
+- Keep tests deterministic (no time-of-day, no external calls)
