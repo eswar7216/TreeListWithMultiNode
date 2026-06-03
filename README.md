@@ -1,23 +1,501 @@
-Here is a hypothesis you can use for your data-fix automation request.
-
-Hypothesis: Data Fix Automation Agent
-
-If we build a controlled Data Fix Automation Agent that can interpret ServiceNow data-fix requests, analyze Excel attachments, classify requested changes, generate SQL from approved templates, and route the output through human approval, then we can significantly reduce manual support effort while improving accuracy, consistency, turnaround time, and SOX auditability.
-
-Today, support teams manually review ServiceNow tickets, open attachments, interpret color-coded Excel rows, create SQL scripts, and send those scripts to Dev and BPO teams for approval. This process is repetitive, time-consuming, and dependent on manual interpretation. It also requires strong audit controls because the final output may impact production data.
-
-For the pilot, we will focus on the NDC List Data Fix process. The agent will assist by reading the request context, identifying the data-fix type, interpreting the Excel structure, mapping color-coded rows to insert or update/term operations, generating SQL using approved templates, validating the package, and preparing a human-review-ready approval summary.
-
-The agent will not directly execute SQL or bypass approvals. Human-in-the-loop review will remain mandatory for Support, Dev, and BPO approval. Every action taken by the automation will be logged, including ticket intake, attachment details, parsed rows, classification decisions, generated SQL, validation results, human approvals, and final ServiceNow updates.
-
-We believe this approach will reduce manual SQL preparation time, improve data-fix quality, reduce operational risk, create a repeatable approval process, and provide a scalable framework for onboarding additional data-fix types in the future.
-
-A sharper version for leadership:
-
-Hypothesis
-
-By introducing a SOX-controlled Data Fix Automation Agent, we can automate the repetitive parts of ServiceNow-based data-fix requests while keeping human approval and audit controls intact.
-
-For the initial NDC List Data Fix pilot, the agent will help interpret ticket instructions, process Excel attachments, classify color-coded rows, generate SQL from approved templates, validate the output, and create an approval-ready package for Support, Dev, and BPO reviewers.
-
-This should reduce manual effort, improve consistency, shorten turnaround time, reduce SQL-generation errors, and strengthen SOX auditability. The solution will also establish a reusable framework that can be extended to additional data-fix types through configuration rather than custom development.
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SOX-Controlled Data Fix Agent",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datafix/process": {
+      "post": {
+        "summary": "Process Ticket",
+        "operationId": "process_ticket_datafix_process_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcessTicketRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datafix/process-local": {
+      "post": {
+        "summary": "Process Local File",
+        "operationId": "process_local_file_datafix_process_local_post",
+        "parameters": [
+          {
+            "name": "ticket_number",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticket Number"
+            }
+          },
+          {
+            "name": "data_fix_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "NDC_LIST_FIX",
+              "title": "Data Fix Type"
+            }
+          },
+          {
+            "name": "ndc_list_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ndc List Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_process_local_file_datafix_process_local_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datafix/{ticket_number}/package": {
+      "get": {
+        "summary": "Get Package",
+        "operationId": "get_package_datafix__ticket_number__package_get",
+        "parameters": [
+          {
+            "name": "ticket_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticket Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datafix/{ticket_number}/sql": {
+      "get": {
+        "summary": "Get Sql Package",
+        "operationId": "get_sql_package_datafix__ticket_number__sql_get",
+        "parameters": [
+          {
+            "name": "ticket_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticket Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datafix/{ticket_number}/approval-summary": {
+      "get": {
+        "summary": "Get Approval Summary",
+        "operationId": "get_approval_summary_datafix__ticket_number__approval_summary_get",
+        "parameters": [
+          {
+            "name": "ticket_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticket Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datafix/approval": {
+      "post": {
+        "summary": "Approve",
+        "operationId": "approve_datafix_approval_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datafix/{ticket_number}/audit": {
+      "get": {
+        "summary": "Get Audit",
+        "operationId": "get_audit_datafix__ticket_number__audit_get",
+        "parameters": [
+          {
+            "name": "ticket_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticket Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApprovalDecision": {
+        "type": "string",
+        "enum": [
+          "APPROVED",
+          "REJECTED",
+          "NEEDS_CHANGES"
+        ],
+        "title": "ApprovalDecision"
+      },
+      "ApprovalRecord": {
+        "properties": {
+          "ticket_number": {
+            "type": "string",
+            "title": "Ticket Number"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ApprovalRole"
+          },
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ApprovalDecision"
+          },
+          "comments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comments"
+          },
+          "decision_ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Decision Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticket_number",
+          "role",
+          "approver_id",
+          "decision"
+        ],
+        "title": "ApprovalRecord"
+      },
+      "ApprovalRequest": {
+        "properties": {
+          "ticket_number": {
+            "type": "string",
+            "title": "Ticket Number"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ApprovalRole"
+          },
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ApprovalDecision"
+          },
+          "comments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticket_number",
+          "role",
+          "approver_id",
+          "decision"
+        ],
+        "title": "ApprovalRequest"
+      },
+      "ApprovalRole": {
+        "type": "string",
+        "enum": [
+          "SUPPORT",
+          "DEV",
+          "BPO"
+        ],
+        "title": "ApprovalRole"
+      },
+      "Body_process_local_file_datafix_process_local_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_process_local_file_datafix_process_local_post"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ProcessTicketRequest": {
+        "properties": {
+          "ticket_number": {
+            "type": "string",
+            "title": "Ticket Number"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticket_number"
+        ],
+        "title": "ProcessTicketRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
